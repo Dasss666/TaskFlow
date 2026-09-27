@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 from PySide6.QtCore import Qt, QDate, QTime
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction\nfrom PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
     QCalendarWidget, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -11,7 +11,7 @@ from taskflow.database import Database
 from taskflow.services.data_transfer import export_tasks, import_tasks
 from taskflow.services.notifications import NotificationService
 from taskflow.ui.week_view import WeekView
-from taskflow.ui.dashboard import DashboardView
+from taskflow.ui.dashboard import DashboardView\nfrom taskflow.ui.themes import load_theme, save_theme, stylesheet, THEMES
 
 CATEGORIES = ["Personal", "University", "Work", "Health", "Projects"]
 PRIORITIES = ["low", "medium", "high"]
@@ -127,7 +127,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 780)
         self._build_menu()
         self._build_ui()
-        self._apply_theme()
+        self._apply_theme(self.current_theme)
         self.notifications = NotificationService(self, self.database)
         self.refresh()
 
@@ -144,7 +144,7 @@ class MainWindow(QMainWindow):
         import_action = QAction("Import JSON...", self)
         import_action.triggered.connect(self.import_data)
         data_menu.addAction(export_action)
-        data_menu.addAction(import_action)
+        data_menu.addAction(import_action)\n\n        theme_menu = self.menuBar().addMenu("Theme")\n        for theme_name in THEMES:\n            action = QAction(theme_name, self)\n            action.setCheckable(True)\n            action.triggered.connect(lambda checked, name=theme_name: self.set_theme(name))\n            theme_menu.addAction(action)\n            setattr(self, f"theme_action_{theme_name.lower()}", action)\n        self._update_theme_actions()
 
     def _build_ui(self):
         root = QWidget()
@@ -263,26 +263,7 @@ class MainWindow(QMainWindow):
             nav.addWidget(button)
         outer.addLayout(nav)
 
-    def _apply_theme(self):
-        self.setStyleSheet("""
-        QWidget { font-size: 14px; }
-        QMainWindow { background: #10131a; }
-        QLabel { color: #e7eaf0; }
-        #appTitle { font-size: 28px; font-weight: 700; color: #9d7cff; }
-        QLineEdit,QPlainTextEdit,QComboBox,QTimeEdit,QListWidget {
-            background:#181c25;color:#e7eaf0;border:1px solid #303746;border-radius:8px;padding:8px;
-        }
-        QPushButton {
-            background:#252b38;color:#e7eaf0;border:1px solid #394152;border-radius:8px;padding:9px 14px;
-        }
-        QPushButton:hover { background:#303746; }
-        QCalendarWidget QWidget { background:#181c25;color:#e7eaf0; }
-        QCalendarWidget QAbstractItemView { selection-background-color:#6d4aff; }
-        QMenuBar,QMenu { background:#141820;color:#e7eaf0; }
-        QScrollArea { border: 1px solid #303746; border-radius: 8px; background: #11151d; }
-        """)
-
-    def show_page(self, index):
+    def _apply_theme(self, theme_name):\n        self.setStyleSheet(stylesheet(theme_name))\n\n    def _update_theme_actions(self):\n        for theme_name in THEMES:\n            action = getattr(self, f"theme_action_{theme_name.lower()}")\n            action.setChecked(theme_name == self.current_theme)\n\n    def set_theme(self, theme_name):\n        if theme_name not in THEMES:\n            return\n        self.current_theme = theme_name\n        save_theme(self.settings, theme_name)\n        self._apply_theme(theme_name)\n        self._update_theme_actions()\n\n    def show_page(self, index):
         self.stack.setCurrentIndex(index)
         if index == 1:
             self.refresh_agenda()
