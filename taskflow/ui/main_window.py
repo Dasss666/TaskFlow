@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from PySide6.QtCore import Qt, QDate, QTime
-from PySide6.QtGui import QAction\nfrom PySide6.QtCore import QSettings
+from PySide6.QtGui import QAction
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
     QCalendarWidget, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -11,7 +12,8 @@ from taskflow.database import Database
 from taskflow.services.data_transfer import export_tasks, import_tasks
 from taskflow.services.notifications import NotificationService
 from taskflow.ui.week_view import WeekView
-from taskflow.ui.dashboard import DashboardView\nfrom taskflow.ui.themes import load_theme, save_theme, stylesheet, THEMES
+from taskflow.ui.dashboard import DashboardView
+from taskflow.ui.themes import load_theme, save_theme, stylesheet, THEMES
 
 CATEGORIES = ["Personal", "University", "Work", "Health", "Projects"]
 PRIORITIES = ["low", "medium", "high"]
@@ -144,7 +146,16 @@ class MainWindow(QMainWindow):
         import_action = QAction("Import JSON...", self)
         import_action.triggered.connect(self.import_data)
         data_menu.addAction(export_action)
-        data_menu.addAction(import_action)\n\n        theme_menu = self.menuBar().addMenu("Theme")\n        for theme_name in THEMES:\n            action = QAction(theme_name, self)\n            action.setCheckable(True)\n            action.triggered.connect(lambda checked, name=theme_name: self.set_theme(name))\n            theme_menu.addAction(action)\n            setattr(self, f"theme_action_{theme_name.lower()}", action)\n        self._update_theme_actions()
+        data_menu.addAction(import_action)
+
+        theme_menu = self.menuBar().addMenu("Theme")
+        for theme_name in THEMES:
+            action = QAction(theme_name, self)
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked, name=theme_name: self.set_theme(name))
+            theme_menu.addAction(action)
+            setattr(self, f"theme_action_{theme_name.lower()}", action)
+        self._update_theme_actions()
 
     def _build_ui(self):
         root = QWidget()
@@ -254,22 +265,41 @@ class MainWindow(QMainWindow):
         nav = QHBoxLayout()
         for label, index in [
             ("📋 Tasks", 0),
-            ("📅 Agenda", 1),
-            ("🗓 Week", 2),
-            ("📆 Calendar", 3),
+            ("📊 Dashboard", 1),
+            ("📅 Agenda", 2),
+            ("🗓 Week", 3),
+            ("📆 Calendar", 4),
         ]:
             button = QPushButton(label)
             button.clicked.connect(lambda checked, i=index: self.show_page(i))
             nav.addWidget(button)
         outer.addLayout(nav)
 
-    def _apply_theme(self, theme_name):\n        self.setStyleSheet(stylesheet(theme_name))\n\n    def _update_theme_actions(self):\n        for theme_name in THEMES:\n            action = getattr(self, f"theme_action_{theme_name.lower()}")\n            action.setChecked(theme_name == self.current_theme)\n\n    def set_theme(self, theme_name):\n        if theme_name not in THEMES:\n            return\n        self.current_theme = theme_name\n        save_theme(self.settings, theme_name)\n        self._apply_theme(theme_name)\n        self._update_theme_actions()\n\n    def show_page(self, index):
+    def _apply_theme(self, theme_name):
+        self.setStyleSheet(stylesheet(theme_name))
+
+    def _update_theme_actions(self):
+        for theme_name in THEMES:
+            action = getattr(self, f"theme_action_{theme_name.lower()}")
+            action.setChecked(theme_name == self.current_theme)
+
+    def set_theme(self, theme_name):
+        if theme_name not in THEMES:
+            return
+        self.current_theme = theme_name
+        save_theme(self.settings, theme_name)
+        self._apply_theme(theme_name)
+        self._update_theme_actions()
+
+    def show_page(self, index):
         self.stack.setCurrentIndex(index)
         if index == 1:
-            self.refresh_agenda()
+            self.refresh_dashboard()
         elif index == 2:
-            self.refresh_week()
+            self.refresh_agenda()
         elif index == 3:
+            self.refresh_week()
+        elif index == 4:
             self.refresh_calendar()
 
     def make_item(self, task):
@@ -284,8 +314,10 @@ class MainWindow(QMainWindow):
         )
         item.setData(Qt.ItemDataRole.UserRole, task["id"])
         item.setToolTip(
-            f"Priority: {task['priority']}\n"
-            f"Tags: {task['tags'] or '-'}\n"
+            f"Priority: {task['priority']}
+"
+            f"Tags: {task['tags'] or '-'}
+"
             f"{task['description'] or ''}"
         )
         if task["completed"]:
@@ -302,6 +334,7 @@ class MainWindow(QMainWindow):
 
     def refresh(self):
         self.refresh_tasks()
+        self.refresh_dashboard()
         self.refresh_agenda()
         self.refresh_week()
         self.refresh_calendar()
