@@ -1,7 +1,5 @@
 from datetime import date, timedelta
 
-from datetime import date, timedelta
-
 from PySide6.QtCore import Qt, QRectF, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget, QScrollArea
