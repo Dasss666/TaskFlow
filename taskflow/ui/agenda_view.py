@@ -39,6 +39,7 @@ class AgendaTimeline(QWidget):
         self._all_day_height = self.ALL_DAY_HEIGHT
         self._tasks = []
         self._rects = {}
+        self.selected_date = date.today()
         self._drag_task_id = None
         self._drag_mode = None
         self._drag_start_y = 0.0
@@ -70,6 +71,10 @@ class AgendaTimeline(QWidget):
     @staticmethod
     def _snap(minutes):
         return round(minutes / AgendaTimeline.SNAP_MINUTES) * AgendaTimeline.SNAP_MINUTES
+
+    def set_date(self, value):
+        self.selected_date = value
+        self.update()
 
     def set_tasks(self, tasks):
         self._tasks = list(tasks)
@@ -104,28 +109,54 @@ class AgendaTimeline(QWidget):
             intervals.append((task, start_m, end_m))
 
         intervals.sort(key=lambda item: (item[1], item[2], item[0]["id"]))
-        columns = []
         result = {}
 
-        for task, start, end in intervals:
-            column = 0
-            while column < len(columns) and columns[column] > start:
-                column += 1
-            if column == len(columns):
-                columns.append(end)
+        # Build connected overlap groups so tasks that only overlap indirectly
+        # still share a consistent horizontal region.
+        groups = []
+        for item in intervals:
+            _, start, end = item
+            group = None
+            for candidate in groups:
+                if any(other_start < end and other_end > start
+                       for _, other_start, other_end in candidate):
+                    group = candidate
+                    break
+            if group is None:
+                groups.append([item])
             else:
-                columns[column] = end
-            result[task["id"]] = [column, 1]
+                group.append(item)
+                changed = True
+                while changed:
+                    changed = False
+                    for other in intervals:
+                        if other in group:
+                            continue
+                        _, other_start, other_end = other
+                        if any(
+                            group_start < other_end and group_end > other_start
+                            for _, group_start, group_end in group
+                        ):
+                            group.append(other)
+                            changed = True
 
-        for task, start, end in intervals:
-            column = result[task["id"]][0]
-            max_columns = 1
-            for other, other_start, other_end in intervals:
-                if other["id"] == task["id"]:
-                    continue
-                if other_start < end and other_end > start:
-                    max_columns = max(max_columns, result[other["id"]][0] + 1)
-            result[task["id"]][1] = max_columns
+        for group in groups:
+            columns = []
+            for task, start, end in sorted(
+                group, key=lambda item: (item[1], item[2], item[0]["id"])
+            ):
+                column = 0
+                while column < len(columns) and columns[column] > start:
+                    column += 1
+                if column == len(columns):
+                    columns.append(end)
+                else:
+                    columns[column] = end
+                result[task["id"]] = [column, 1]
+
+            max_columns = len(columns)
+            for task, _, _ in group:
+                result[task["id"]][1] = max_columns
 
         self._overlap_columns = result
 
@@ -533,6 +564,7 @@ class AgendaView(QWidget):
 
         self._rebuild_day_strip()
         self._update_header()
+        self.timeline.set_date(self.selected_date)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -549,6 +581,7 @@ class AgendaView(QWidget):
         self.selected_date = value
         self._update_header()
         self._rebuild_day_strip()
+        self.timeline.set_date(value)
         self.dateChanged.emit(value)
 
     def set_tasks(self, tasks):
