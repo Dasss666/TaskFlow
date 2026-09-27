@@ -1,5 +1,5 @@
 #define MyAppName "TaskFlow"
-#define MyAppVersion "0.5.0"
+#define MyAppVersion "0.6.0"
 #define MyAppPublisher "Dasss666"
 #define MyAppExeName "TaskFlow.exe"
 
