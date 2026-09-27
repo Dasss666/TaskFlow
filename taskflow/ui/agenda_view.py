@@ -1,12 +1,21 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
-from PySide6.QtCore import Qt, QRectF, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget, QScrollArea
+from PySide6.QtCore import QDateTime, QPointF, QTimer, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QCursor, QPainter, QPen
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class AgendaTimeline(QWidget):
     taskActivated = Signal(int)
+    taskMoved = Signal(int, str, str, str)
+    taskResized = Signal(int, str, str)
 
     START_HOUR = 7
     END_HOUR = 23
@@ -14,50 +23,212 @@ class AgendaTimeline(QWidget):
     LEFT_LABEL = 72
     TASK_X = 118
     ALL_DAY_HEIGHT = 74
+    SNAP_MINUTES = 15
+    MIN_DURATION = 30
+
+    CATEGORY_COLORS = {
+        "Personal": "#ff8585",
+        "University": "#8f9cff",
+        "Work": "#f0b35b",
+        "Health": "#63d2b3",
+        "Projects": "#c48cff",
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._all_day_height = self.ALL_DAY_HEIGHT
-        self.setMinimumHeight(
-            self._all_day_height + (self.END_HOUR - self.START_HOUR) * self.HOUR_HEIGHT
-        )
-        self.setMouseTracking(True)
         self._tasks = []
         self._rects = {}
+        self._drag_task_id = None
+        self._drag_mode = None
+        self._drag_start_y = 0.0
+        self._drag_original = None
+        self._preview_times = {}
+        self._overlap_columns = {}
 
-    def set_tasks(self, tasks):
-        self._tasks = list(tasks)
-        all_day_count = sum(1 for task in self._tasks if not task["start_time"] or not task["end_time"])
-        self._all_day_height = max(self.ALL_DAY_HEIGHT, 16 + all_day_count * 48)
+        self.setMouseTracking(True)
         self.setMinimumHeight(
-            self._all_day_height + (self.END_HOUR - self.START_HOUR) * self.HOUR_HEIGHT
+            self._all_day_height
+            + (self.END_HOUR - self.START_HOUR) * self.HOUR_HEIGHT
         )
-        self._rebuild_rects()
-        self.update()
+
+        self.clock = QTimer(self)
+        self.clock.setInterval(30_000)
+        self.clock.timeout.connect(self.update)
+        self.clock.start()
 
     @staticmethod
     def _minutes(value):
         hours, minutes = map(int, value.split(":"))
         return hours * 60 + minutes
 
-    def _rebuild_rects(self):
-        self._rects = {}
-        width = max(420, self.width() - self.TASK_X - 34)
-        for task in self._tasks:
-            if not task["start_time"] or not task["end_time"]:
-                continue
+    @staticmethod
+    def _time_string(minutes):
+        minutes = max(0, min(23 * 60 + 59, minutes))
+        return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+    @staticmethod
+    def _snap(minutes):
+        return round(minutes / AgendaTimeline.SNAP_MINUTES) * AgendaTimeline.SNAP_MINUTES
+
+    def set_tasks(self, tasks):
+        self._tasks = list(tasks)
+        self._preview_times.clear()
+        all_day_count = sum(
+            1 for task in self._tasks
+            if not task["start_time"] or not task["end_time"]
+        )
+        self._all_day_height = max(self.ALL_DAY_HEIGHT, 16 + all_day_count * 48)
+        self.setMinimumHeight(
+            self._all_day_height
+            + (self.END_HOUR - self.START_HOUR) * self.HOUR_HEIGHT
+        )
+        self._rebuild_rects()
+        self.update()
+
+    def _effective_times(self, task):
+        preview = self._preview_times.get(task["id"])
+        if preview:
+            return preview
+        return task["start_time"], task["end_time"]
+
+    def _layout_overlaps(self, timed_tasks):
+        intervals = []
+        for task in timed_tasks:
+            start, end = self._effective_times(task)
             try:
-                start = self._minutes(task["start_time"])
-                end = max(start + 30, self._minutes(task["end_time"]))
+                start_m = self._minutes(start)
+                end_m = max(start_m + self.MIN_DURATION, self._minutes(end))
             except (TypeError, ValueError):
                 continue
-            y = self._all_day_height + (start - self.START_HOUR * 60) * self.HOUR_HEIGHT / 60
-            h = max(42, (end - start) * self.HOUR_HEIGHT / 60 - 8)
-            self._rects[task["id"]] = QRectF(self.TASK_X, y + 4, width, h)
+            intervals.append((task, start_m, end_m))
+
+        intervals.sort(key=lambda item: (item[1], item[2], item[0]["id"]))
+        columns = []
+        result = {}
+
+        for task, start, end in intervals:
+            column = 0
+            while column < len(columns) and columns[column] > start:
+                column += 1
+            if column == len(columns):
+                columns.append(end)
+            else:
+                columns[column] = end
+            result[task["id"]] = [column, 1]
+
+        for task, start, end in intervals:
+            column = result[task["id"]][0]
+            max_columns = 1
+            for other, other_start, other_end in intervals:
+                if other["id"] == task["id"]:
+                    continue
+                if other_start < end and other_end > start:
+                    max_columns = max(max_columns, result[other["id"]][0] + 1)
+            result[task["id"]][1] = max_columns
+
+        self._overlap_columns = result
+
+    def _rebuild_rects(self):
+        self._rects = {}
+        self._layout_overlaps(
+            [task for task in self._tasks if task["start_time"] and task["end_time"]]
+        )
+
+        available_width = max(360, self.width() - self.TASK_X - 34)
+        gap = 8
+
+        for task in self._tasks:
+            start, end = self._effective_times(task)
+            if not start or not end:
+                continue
+
+            if task["id"] in self._overlap_columns:
+                column, count = self._overlap_columns[task["id"]]
+            else:
+                column, count = 0, 1
+
+            try:
+                start_m = self._minutes(start)
+                end_m = max(start_m + self.MIN_DURATION, self._minutes(end))
+            except (TypeError, ValueError):
+                continue
+
+            y = (
+                self._all_day_height
+                + (start_m - self.START_HOUR * 60) * self.HOUR_HEIGHT / 60
+            )
+            height = max(
+                42,
+                (end_m - start_m) * self.HOUR_HEIGHT / 60 - 8,
+            )
+
+            column_width = (
+                available_width - gap * (count - 1)
+            ) / max(1, count)
+            x = self.TASK_X + column * (column_width + gap)
+
+            self._rects[task["id"]] = (
+                task,
+                __import__("PySide6.QtCore", fromlist=["QRectF"]).QRectF(
+                    x, y + 4, column_width, height
+                ),
+            )
 
     def resizeEvent(self, event):
         self._rebuild_rects()
         super().resizeEvent(event)
+
+    def _category_color(self, task):
+        return QColor(self.CATEGORY_COLORS.get(task["category"], "#9d7cff"))
+
+    def _paint_tags(self, painter, rect, task, text_color):
+        tags = [
+            tag.strip()
+            for tag in (task["tags"] or "").split(",")
+            if tag.strip()
+        ]
+        if not tags or rect.height() < 90:
+            return
+
+        x = int(rect.x() + 14)
+        y = int(rect.bottom() - 25)
+        for tag in tags[:3]:
+            width = min(100, 14 + len(tag) * 7)
+            badge = __import__("PySide6.QtCore", fromlist=["QRectF"]).QRectF(
+                x, y, width, 20
+            )
+            painter.setBrush(QBrush(QColor(text_color).darker(150)))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(badge, 9, 9)
+            painter.setPen(QPen(text_color, 1))
+            painter.drawText(
+                int(badge.x() + 8), int(badge.y() + 14), tag[:14]
+            )
+            x += width + 6
+
+    def _paint_current_time(self, painter):
+        if not self._tasks:
+            return
+        today = getattr(self.parent(), "selected_date", None)
+        if today != date.today():
+            return
+
+        now = datetime.now()
+        minutes = now.hour * 60 + now.minute + now.second / 60
+        if minutes < self.START_HOUR * 60 or minutes > self.END_HOUR * 60:
+            return
+
+        y = self._all_day_height + (
+            minutes - self.START_HOUR * 60
+        ) * self.HOUR_HEIGHT / 60
+
+        accent = QColor("#ff8585")
+        painter.setPen(QPen(accent, 2))
+        painter.drawLine(self.LEFT_LABEL, int(y), self.width() - 10, int(y))
+        painter.setBrush(QBrush(accent))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(self.LEFT_LABEL, y), 4, 4)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -66,106 +237,247 @@ class AgendaTimeline(QWidget):
         background = self.palette().window().color()
         text = self.palette().windowText().color()
         muted = QColor(text)
-        muted.setAlpha(110)
+        muted.setAlpha(115)
         grid = QColor(text)
-        grid.setAlpha(22)
+        grid.setAlpha(20)
         grid_strong = QColor(text)
         grid_strong.setAlpha(35)
-        accent = QColor("#ff8585")
 
         painter.fillRect(self.rect(), background)
 
-        # All-day area
+        all_day = [
+            task for task in self._tasks
+            if not task["start_time"] or not task["end_time"]
+        ]
+
         painter.setPen(QPen(grid_strong, 1))
-        painter.drawLine(self.TASK_X, self.ALL_DAY_HEIGHT, self.width(), self.ALL_DAY_HEIGHT)
+        painter.drawLine(
+            self.TASK_X, self._all_day_height,
+            self.width(), self._all_day_height
+        )
         painter.setPen(QPen(muted, 1))
         painter.drawText(20, 31, "ALL DAY")
 
-        all_day = [t for t in self._tasks if not t["start_time"] or not t["end_time"]]
-        painter.setPen(QPen(grid_strong, 1))
-        painter.drawLine(self.TASK_X, self._all_day_height, self.width(), self._all_day_height)
         y = 10
         for task in all_day:
-            rect = QRectF(self.TASK_X, y, max(260, self.width() - self.TASK_X - 34), 42)
-            self._rects[task["id"]] = rect
-            painter.setBrush(QBrush(QColor("#272b35")))
-            painter.setPen(QPen(QColor("#454b58"), 1))
+            rect = __import__("PySide6.QtCore", fromlist=["QRectF"]).QRectF(
+                self.TASK_X, y, max(260, self.width() - self.TASK_X - 34), 42
+            )
+            self._rects[task["id"]] = (task, rect)
+
+            category = self._category_color(task)
+            fill = QColor(category)
+            fill.setAlpha(45)
+
+            painter.setBrush(QBrush(fill))
+            painter.setPen(QPen(category, 1.5))
             painter.drawRoundedRect(rect, 10, 10)
             painter.setPen(QPen(text, 1))
-            painter.drawText(int(rect.x() + 14), int(rect.y() + 27), task["title"])
+            painter.drawText(
+                int(rect.x() + 14), int(rect.y() + 27), task["title"]
+            )
             y += 48
 
-        # Hour grid
         for hour in range(self.START_HOUR, self.END_HOUR + 1):
-            y = self._all_day_height + (hour - self.START_HOUR) * self.HOUR_HEIGHT
+            y = self._all_day_height + (
+                hour - self.START_HOUR
+            ) * self.HOUR_HEIGHT
+
             painter.setPen(QPen(grid_strong, 1))
             painter.drawLine(self.LEFT_LABEL, int(y), self.width(), int(y))
             painter.setPen(QPen(muted, 1))
             painter.drawText(20, int(y + 5), f"{hour:02d}:00")
+
             if hour < self.END_HOUR:
                 half = y + self.HOUR_HEIGHT / 2
                 painter.setPen(QPen(grid, 1))
-                painter.drawLine(self.LEFT_LABEL, int(half), self.width(), int(half))
-
-        # Task blocks
-        for task in self._tasks:
-            if task["id"] not in self._rects or not task["start_time"] or not task["end_time"]:
-                continue
-            rect = self._rects[task["id"]]
-            completed = bool(task["completed"])
-            priority = task["priority"]
-            if completed:
-                fill = QColor("#343841")
-                border = QColor("#555b66")
-            elif priority == "high":
-                fill = QColor("#5b2f3f")
-                border = QColor("#ff8585")
-            elif priority == "medium":
-                fill = QColor("#353b55")
-                border = QColor("#7e8dff")
-            else:
-                fill = QColor("#303e45")
-                border = QColor("#62c4b2")
-
-            painter.setBrush(QBrush(fill))
-            painter.setPen(QPen(border, 1.5))
-            painter.drawRoundedRect(rect, 12, 12)
-
-            painter.setPen(QPen(text if not completed else muted, 1))
-            title = task["title"]
-            if rect.height() > 62:
-                title += f"\n{task['start_time']} – {task['end_time']}"
-            painter.drawText(
-                int(rect.x() + 14),
-                int(rect.y() + 14),
-                int(rect.width() - 28),
-                int(rect.height() - 18),
-                Qt.TextFlag.TextWordWrap,
-                title,
-            )
-
-            if task["category"] and rect.height() > 82:
-                painter.setPen(QPen(muted, 1))
-                painter.drawText(
-                    int(rect.x() + 14),
-                    int(rect.bottom() - 13),
-                    int(rect.width() - 28),
-                    16,
-                    Qt.TextFlag.TextSingleLine,
-                    task["category"],
+                painter.drawLine(
+                    self.LEFT_LABEL, int(half), self.width(), int(half)
                 )
 
-    def mouseDoubleClickEvent(self, event):
-        pos = event.position()
-        for task_id, rect in self._rects.items():
+        for task in self._tasks:
+            if task["id"] not in self._rects:
+                continue
+            if not task["start_time"] or not task["end_time"]:
+                continue
+
+            _, rect = self._rects[task["id"]]
+            category = self._category_color(task)
+            completed = bool(task["completed"])
+
+            fill = QColor(category)
+            fill.setAlpha(48 if not completed else 22)
+            border = QColor(category)
+            if completed:
+                border.setAlpha(100)
+
+            painter.setBrush(QBrush(fill))
+            painter.setPen(QPen(border, 1.7))
+            painter.drawRoundedRect(rect, 12, 12)
+
+            # Category accent stripe.
+            painter.setBrush(QBrush(category))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(
+                __import__("PySide6.QtCore", fromlist=["QRectF"]).QRectF(
+                    rect.x(), rect.y(), 5, rect.height()
+                ),
+                3, 3
+            )
+
+            title_color = QColor(text)
+            if completed:
+                title_color.setAlpha(120)
+
+            painter.setPen(QPen(muted, 1))
+            start, end = self._effective_times(task)
+            painter.drawText(
+                int(rect.x() + 14), int(rect.y() + 17),
+                f"{start} – {end}"
+            )
+
+            painter.setPen(QPen(title_color, 1))
+            painter.drawText(
+                int(rect.x() + 14),
+                int(rect.y() + 40),
+                int(rect.width() - 28),
+                max(20, int(rect.height() - 46)),
+                Qt.TextFlag.TextWordWrap,
+                task["title"],
+            )
+
+            self._paint_tags(painter, rect, task, title_color)
+
+        self._paint_current_time(painter)
+
+    def _hit_test(self, pos):
+        # Later-added tasks are checked first, making the topmost card easier to grab.
+        for task_id, (task, rect) in reversed(list(self._rects.items())):
             if rect.contains(pos):
-                self.taskActivated.emit(task_id)
-                return
+                return task, rect
+        return None, None
+
+    def _drag_mode_for(self, pos, rect):
+        edge = 9
+        if abs(pos.y() - rect.bottom()) <= edge:
+            return "resize_bottom"
+        if abs(pos.y() - rect.top()) <= edge:
+            return "resize_top"
+        return "move"
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return super().mousePressEvent(event)
+
+        task, rect = self._hit_test(event.position())
+        if not task or not task["start_time"] or not task["end_time"]:
+            return super().mousePressEvent(event)
+
+        self._drag_task_id = int(task["id"])
+        self._drag_mode = self._drag_mode_for(event.position(), rect)
+        self._drag_start_y = event.position().y()
+        self._drag_original = (task["start_time"], task["end_time"])
+        self._preview_times[self._drag_task_id] = self._drag_original
+        self.setCursor(
+            QCursor(Qt.CursorShape.SizeVerCursor)
+            if self._drag_mode.startswith("resize")
+            else QCursor(Qt.CursorShape.ClosedHandCursor)
+        )
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if not self._drag_task_id:
+            task, rect = self._hit_test(event.position())
+            if rect:
+                mode = self._drag_mode_for(event.position(), rect)
+                self.setCursor(
+                    QCursor(Qt.CursorShape.SizeVerCursor)
+                    if mode.startswith("resize")
+                    else QCursor(Qt.CursorShape.OpenHandCursor)
+                )
+            else:
+                self.unsetCursor()
+            return
+
+        delta_minutes = self._snap(
+            (event.position().y() - self._drag_start_y)
+            * 60 / self.HOUR_HEIGHT
+        )
+        original_start = self._minutes(self._drag_original[0])
+        original_end = self._minutes(self._drag_original[1])
+
+        if self._drag_mode == "move":
+            duration = original_end - original_start
+            new_start = self._snap(original_start + delta_minutes)
+            new_start = max(self.START_HOUR * 60, new_start)
+            new_start = min(self.END_HOUR * 60 - duration, new_start)
+            new_end = new_start + duration
+        elif self._drag_mode == "resize_bottom":
+            new_start = original_start
+            new_end = self._snap(original_end + delta_minutes)
+            new_end = max(new_start + self.MIN_DURATION, new_end)
+            new_end = min(self.END_HOUR * 60, new_end)
+        else:
+            new_end = original_end
+            new_start = self._snap(original_start + delta_minutes)
+            new_start = max(self.START_HOUR * 60, new_start)
+            new_start = min(new_end - self.MIN_DURATION, new_start)
+
+        self._preview_times[self._drag_task_id] = (
+            self._time_string(new_start),
+            self._time_string(new_end),
+        )
+        self._rebuild_rects()
+        self.update()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return super().mouseReleaseEvent(event)
+
+        task_id = self._drag_task_id
+        if task_id:
+            original = self._drag_original
+            new_start, new_end = self._preview_times.get(task_id, original)
+            self._preview_times.pop(task_id, None)
+
+            if self._drag_mode == "move":
+                task = next(
+                    (task for task in self._tasks if int(task["id"]) == task_id),
+                    None,
+                )
+                if task and (new_start, new_end) != original:
+                    self.taskMoved.emit(
+                        task_id,
+                        task["due_date"],
+                        new_start,
+                        new_end,
+                    )
+            elif (new_start, new_end) != original:
+                self.taskResized.emit(task_id, new_start, new_end)
+
+            self._drag_task_id = None
+            self._drag_mode = None
+            self._drag_original = None
+            self._rebuild_rects()
+            self.update()
+
+        self.unsetCursor()
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event):
+        task, rect = self._hit_test(event.position())
+        if task and rect.contains(event.position()):
+            self.taskActivated.emit(int(task["id"]))
+            event.accept()
+            return
         super().mouseDoubleClickEvent(event)
 
 
 class AgendaView(QWidget):
     taskActivated = Signal(int)
+    dateChanged = Signal(object)
+    newTaskRequested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -185,11 +497,14 @@ class AgendaView(QWidget):
         previous = QPushButton("‹")
         previous.setObjectName("iconButton")
         previous.clicked.connect(lambda: self._shift_date(-1))
+
+        today = QPushButton("Today")
+        today.clicked.connect(self._go_today)
+
         next_button = QPushButton("›")
         next_button.setObjectName("iconButton")
         next_button.clicked.connect(lambda: self._shift_date(1))
-        today = QPushButton("Today")
-        today.clicked.connect(self._go_today)
+
         header.addWidget(previous)
         header.addWidget(today)
         header.addWidget(next_button)
@@ -207,13 +522,34 @@ class AgendaView(QWidget):
         self.scroll.setWidget(self.timeline)
         root.addWidget(self.scroll, 1)
 
+        # Floating add button, matching the reference interaction.
+        self.add_button = QPushButton("+", self)
+        self.add_button.setObjectName("floatingAddButton")
+        self.add_button.setFixedSize(64, 64)
+        self.add_button.setToolTip("Add task")
+        self.add_button.clicked.connect(
+            lambda: self.newTaskRequested.emit(self.selected_date)
+        )
+
         self._rebuild_day_strip()
         self._update_header()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        margin = 20
+        self.add_button.move(
+            self.width() - self.add_button.width() - margin,
+            self.height() - self.add_button.height() - margin,
+        )
+
     def set_date(self, value: date):
+        if self.selected_date == value:
+            self._rebuild_day_strip()
+            return
         self.selected_date = value
         self._update_header()
         self._rebuild_day_strip()
+        self.dateChanged.emit(value)
 
     def set_tasks(self, tasks):
         self._tasks = list(tasks)
@@ -237,7 +573,7 @@ class AgendaView(QWidget):
 
     def _rebuild_day_strip(self):
         self._clear_layout(self.day_strip)
-        monday = self.selected_date - timedelta(days=(self.selected_date.weekday() + 1) % 7)
+        monday = self.selected_date - timedelta(days=self.selected_date.weekday())
         for offset in range(7):
             current = monday + timedelta(days=offset)
             button = QPushButton()
@@ -245,5 +581,7 @@ class AgendaView(QWidget):
             button.setChecked(current == self.selected_date)
             button.setObjectName("dayButton")
             button.setText(f"{current.strftime('%a')}\n{current.day}")
-            button.clicked.connect(lambda checked, value=current: self.set_date(value))
+            button.clicked.connect(
+                lambda checked, value=current: self.set_date(value)
+            )
             self.day_strip.addWidget(button, 1)
