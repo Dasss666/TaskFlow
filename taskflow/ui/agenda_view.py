@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QDateTime, QPointF, QTimer, Qt, Signal
@@ -620,6 +621,11 @@ class AgendaView(QWidget):
     dateChanged = Signal(object)
     newTaskRequested = Signal(object)
 
+    MONTH_NAMES = (
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    )
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.selected_date = date.today()
@@ -627,30 +633,46 @@ class AgendaView(QWidget):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(14)
+        root.setSpacing(10)
 
+        # Structured-inspired header:
+        # month selector on the left, compact week navigation in the center.
         header = QHBoxLayout()
-        self.month_label = QLabel()
-        self.month_label.setObjectName("pageTitle")
-        header.addWidget(self.month_label)
+        header.setSpacing(8)
+
+        self.month_button = QPushButton()
+        self.month_button.setObjectName("agendaMonthButton")
+        self.month_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.month_button.clicked.connect(self._show_month_menu)
+        header.addWidget(self.month_button)
+
+        self.week_label = QLabel()
+        self.week_label.setObjectName("agendaWeekLabel")
+        header.addWidget(self.week_label)
+
         header.addStretch()
 
         previous = QPushButton("‹")
-        previous.setObjectName("iconButton")
-        previous.clicked.connect(lambda: self._shift_date(-1))
+        previous.setObjectName("agendaNavButton")
+        previous.setToolTip("Previous week")
+        previous.clicked.connect(lambda: self._shift_week(-1))
 
-        today = QPushButton("Today")
-        today.clicked.connect(self._go_today)
+        self.today_button = QPushButton("Today")
+        self.today_button.setObjectName("agendaTodayButton")
+        self.today_button.clicked.connect(self._go_today)
 
         next_button = QPushButton("›")
-        next_button.setObjectName("iconButton")
-        next_button.clicked.connect(lambda: self._shift_date(1))
+        next_button.setObjectName("agendaNavButton")
+        next_button.setToolTip("Next week")
+        next_button.clicked.connect(lambda: self._shift_week(1))
 
         header.addWidget(previous)
-        header.addWidget(today)
+        header.addWidget(self.today_button)
         header.addWidget(next_button)
         root.addLayout(header)
 
+        # Seven-day strip. The selected day stays visually anchored while
+        # the left/right controls move by a complete week.
         self.day_strip = QHBoxLayout()
         self.day_strip.setSpacing(8)
         root.addLayout(self.day_strip)
@@ -663,7 +685,6 @@ class AgendaView(QWidget):
         self.scroll.setWidget(self.timeline)
         root.addWidget(self.scroll, 1)
 
-        # Floating add button, matching the reference interaction.
         self.add_button = QPushButton("+", self)
         self.add_button.setObjectName("floatingAddButton")
         self.add_button.setFixedSize(64, 64)
@@ -686,8 +707,11 @@ class AgendaView(QWidget):
 
     def set_date(self, value: date):
         if self.selected_date == value:
+            self._update_header()
             self._rebuild_day_strip()
+            self.timeline.set_date(value)
             return
+
         self.selected_date = value
         self._update_header()
         self._rebuild_day_strip()
@@ -697,15 +721,69 @@ class AgendaView(QWidget):
     def set_tasks(self, tasks):
         self._tasks = list(tasks)
         self.timeline.set_tasks(self._tasks)
+        self._rebuild_day_strip()
 
-    def _shift_date(self, days):
-        self.set_date(self.selected_date + timedelta(days=days))
+    def _shift_week(self, weeks):
+        self.set_date(self.selected_date + timedelta(days=7 * weeks))
 
     def _go_today(self):
         self.set_date(date.today())
 
     def _update_header(self):
-        self.month_label.setText(self.selected_date.strftime("%B %Y"))
+        selected = self.selected_date
+        self.month_button.setText(f"{self.MONTH_NAMES[selected.month - 1]} {selected.year}  ⌄")
+
+        monday = selected - timedelta(days=selected.weekday())
+        sunday = monday + timedelta(days=6)
+        if monday.year == sunday.year:
+            if monday.month == sunday.month:
+                week_text = f"{monday.strftime('%b')} {monday.day} – {sunday.day}"
+            else:
+                week_text = f"{monday.strftime('%b')} {monday.day} – {sunday.strftime('%b')} {sunday.day}"
+        else:
+            week_text = (
+                f"{monday.strftime('%b')} {monday.day}, {monday.year} – "
+                f"{sunday.strftime('%b')} {sunday.day}, {sunday.year}"
+            )
+        self.week_label.setText(week_text)
+
+        self.today_button.setEnabled(selected != date.today())
+        self.today_button.setToolTip(
+            "Go to today" if selected != date.today() else "Today is selected"
+        )
+
+    def _show_month_menu(self):
+        menu = __import__("PySide6.QtWidgets", fromlist=["QMenu"]).QMenu(self)
+        menu.setObjectName("agendaMonthMenu")
+
+        year = self.selected_date.year
+        for month_index, month_name in enumerate(self.MONTH_NAMES, start=1):
+            action = menu.addAction(month_name)
+            action.setCheckable(True)
+            action.setChecked(month_index == self.selected_date.month)
+            action.triggered.connect(
+                lambda checked, month=month_index, y=year: self._select_month(y, month)
+            )
+
+        menu.addSeparator()
+        prev_year = menu.addAction(f"‹ {year - 1}")
+        next_year = menu.addAction(f"{year + 1} ›")
+        prev_year.triggered.connect(
+            lambda: self._select_month(year - 1, self.selected_date.month)
+        )
+        next_year.triggered.connect(
+            lambda: self._select_month(year + 1, self.selected_date.month)
+        )
+
+        menu.exec(
+            self.month_button.mapToGlobal(
+                self.month_button.rect().bottomLeft()
+            )
+        )
+
+    def _select_month(self, year, month):
+        day = min(self.selected_date.day, monthrange(year, month)[1])
+        self.set_date(date(year, month, day))
 
     def _clear_layout(self, layout):
         while layout.count():
@@ -716,14 +794,30 @@ class AgendaView(QWidget):
 
     def _rebuild_day_strip(self):
         self._clear_layout(self.day_strip)
+
         monday = self.selected_date - timedelta(days=self.selected_date.weekday())
+        today = date.today()
+
         for offset in range(7):
             current = monday + timedelta(days=offset)
             button = QPushButton()
             button.setCheckable(True)
             button.setChecked(current == self.selected_date)
-            button.setObjectName("dayButton")
-            button.setText(f"{current.strftime('%a')}\n{current.day}")
+            button.setObjectName(
+                "agendaDayToday" if current == today else "dayButton"
+            )
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+
+            weekday = current.strftime("%a").upper()
+            if current == today:
+                text = f"{weekday}\n{current.day}\n•"
+            else:
+                text = f"{weekday}\n{current.day}"
+
+            button.setText(text)
+            button.setToolTip(
+                f"Open {current.strftime('%A, %d %B %Y')}"
+            )
             button.clicked.connect(
                 lambda checked, value=current: self.set_date(value)
             )
