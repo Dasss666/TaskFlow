@@ -1,5 +1,7 @@
 from datetime import date, timedelta
 
+from datetime import date, timedelta
+
 from PySide6.QtCore import Qt, QRectF, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget, QScrollArea
@@ -51,7 +53,7 @@ class AgendaTimeline(QWidget):
                 end = max(start + 30, self._minutes(task["end_time"]))
             except (TypeError, ValueError):
                 continue
-            y = self.ALL_DAY_HEIGHT + (start - self.START_HOUR * 60) * self.HOUR_HEIGHT / 60
+            y = self._all_day_height + (start - self.START_HOUR * 60) * self.HOUR_HEIGHT / 60
             h = max(42, (end - start) * self.HOUR_HEIGHT / 60 - 8)
             self._rects[task["id"]] = QRectF(self.TASK_X, y + 4, width, h)
 
