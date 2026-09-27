@@ -566,6 +566,7 @@ class MainWindow(QMainWindow):
         self.agenda.taskActivated.connect(self.edit_task_by_id)
         self.agenda.dateChanged.connect(lambda value: self.refresh_agenda())
         self.agenda.newTaskRequested.connect(self.new_task)
+        self.agenda.timeline.taskCompletionRequested.connect(self.set_task_completed)
         self.agenda.timeline.taskMoved.connect(self.move_agenda_task)
         self.agenda.timeline.taskResized.connect(self.resize_agenda_task)
         self.stack.addWidget(self.agenda)
