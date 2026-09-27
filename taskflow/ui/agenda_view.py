@@ -803,9 +803,8 @@ class AgendaView(QWidget):
             button = QPushButton()
             button.setCheckable(True)
             button.setChecked(current == self.selected_date)
-            button.setObjectName(
-                "agendaDayToday" if current == today else "dayButton"
-            )
+            button.setObjectName("dayButton")
+            button.setProperty("today", current == today)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
 
             weekday = current.strftime("%a").upper()
