@@ -27,6 +27,11 @@ class AgendaTimeline(QWidget):
 
     def set_tasks(self, tasks):
         self._tasks = list(tasks)
+        all_day_count = sum(1 for task in self._tasks if not task["start_time"] or not task["end_time"])
+        self._all_day_height = max(self.ALL_DAY_HEIGHT, 16 + all_day_count * 48)
+        self.setMinimumHeight(
+            self._all_day_height + (self.END_HOUR - self.START_HOUR) * self.HOUR_HEIGHT
+        )
         self._rebuild_rects()
         self.update()
 
@@ -77,10 +82,6 @@ class AgendaTimeline(QWidget):
         painter.drawText(20, 31, "ALL DAY")
 
         all_day = [t for t in self._tasks if not t["start_time"] or not t["end_time"]]
-        self._all_day_height = max(self.ALL_DAY_HEIGHT, 16 + len(all_day) * 48)
-        self.setMinimumHeight(
-            self._all_day_height + (self.END_HOUR - self.START_HOUR) * self.HOUR_HEIGHT
-        )
         painter.setPen(QPen(grid_strong, 1))
         painter.drawLine(self.TASK_X, self._all_day_height, self.width(), self._all_day_height)
         y = 10
