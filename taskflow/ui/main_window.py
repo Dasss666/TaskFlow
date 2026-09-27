@@ -16,6 +16,7 @@ from taskflow.services.recurrence import materialize_recurring_tasks
 from taskflow.ui.agenda_view import AgendaView
 from taskflow.ui.dashboard import DashboardView
 from taskflow.ui.themes import load_theme, save_theme, stylesheet, THEMES
+from taskflow.ui.task_icons import SmartTaskIcon, icon_color
 
 CATEGORIES = ["Personal", "University", "Work", "Health", "Projects"]
 PRIORITIES = ["low", "medium", "high"]
@@ -205,11 +206,8 @@ class TaskCard(QFrame):
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(12)
 
-        self.check = AnimatedCheck(bool(task["completed"]))
-        self.check.checkedChanged.connect(
-            lambda checked: self.completionChanged.emit(self.task_id, checked)
-        )
-        root.addWidget(self.check, 0, Qt.AlignmentFlag.AlignTop)
+        self.smart_icon = SmartTaskIcon(task, 44)
+        root.addWidget(self.smart_icon, 0, Qt.AlignmentFlag.AlignTop)
 
         body = QVBoxLayout()
         body.setSpacing(4)
@@ -260,14 +258,26 @@ class TaskCard(QFrame):
 
         actions = QVBoxLayout()
         actions.setSpacing(6)
+
+        top_actions = QHBoxLayout()
+        top_actions.setSpacing(6)
         priority = QLabel(task["priority"].upper())
         priority.setObjectName(f"priority_{task['priority']}")
-        actions.addWidget(priority, 0, Qt.AlignmentFlag.AlignRight)
+        top_actions.addWidget(priority)
+        top_actions.addStretch()
+
         more = QToolButton()
         more.setText("⋯")
         more.setObjectName("cardMoreButton")
         more.clicked.connect(self._show_menu)
-        actions.addWidget(more, 0, Qt.AlignmentFlag.AlignRight)
+        top_actions.addWidget(more)
+        actions.addLayout(top_actions)
+
+        self.check = AnimatedCheck(bool(task["completed"]))
+        self.check.checkedChanged.connect(
+            lambda checked: self.completionChanged.emit(self.task_id, checked)
+        )
+        actions.addWidget(self.check, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(actions)
 
         if task["completed"]:
