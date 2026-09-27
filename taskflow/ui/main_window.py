@@ -11,6 +11,7 @@ from taskflow.database import Database
 from taskflow.services.data_transfer import export_tasks, import_tasks
 from taskflow.services.notifications import NotificationService
 from taskflow.ui.week_view import WeekView
+from taskflow.ui.dashboard import DashboardView
 
 CATEGORIES = ["Personal", "University", "Work", "Health", "Projects"]
 PRIORITIES = ["low", "medium", "high"]
@@ -172,7 +173,23 @@ class MainWindow(QMainWindow):
 
         tasks_page = QWidget()
         layout = QVBoxLayout(tasks_page)
-        layout.addWidget(QLabel("All tasks"))
+        filter_row = QHBoxLayout()
+        self.status_filter = QComboBox(); self.status_filter.addItems(["All status", "Open", "Completed"])
+        self.priority_filter = QComboBox(); self.priority_filter.addItems(["All priorities", "High", "Medium", "Low"])
+        self.category_filter = QComboBox(); self.category_filter.addItems(["All categories"] + CATEGORIES)
+        self.recurrence_filter = QComboBox(); self.recurrence_filter.addItems(["All recurrence", "None", "Daily", "Weekly", "Monthly"])
+        for widget in (self.status_filter, self.priority_filter, self.category_filter, self.recurrence_filter):
+            widget.currentIndexChanged.connect(self.refresh_tasks); filter_row.addWidget(widget)
+        reset = QPushButton("Reset"); reset.clicked.connect(self.reset_filters); filter_row.addWidget(reset)
+        layout.addLayout(filter_row)
+        date_row = QHBoxLayout()
+        self.date_filter_toggle = QPushButton("Date range"); self.date_filter_toggle.setCheckable(True)
+        self.date_filter_toggle.toggled.connect(self.toggle_date_filters); date_row.addWidget(self.date_filter_toggle)
+        self.filter_from = QCalendarWidget(); self.filter_from.setMaximumHeight(170); self.filter_from.setVisible(False)
+        self.filter_to = QCalendarWidget(); self.filter_to.setMaximumHeight(170); self.filter_to.setVisible(False)
+        date_row.addWidget(self.filter_from); date_row.addWidget(self.filter_to); date_row.addStretch()
+        layout.addLayout(date_row)
+        layout.addWidget(QLabel("Filtered tasks"))
         self.task_list = QListWidget()
         self.task_list.itemDoubleClicked.connect(self.edit_item)
         layout.addWidget(self.task_list)
@@ -309,12 +326,36 @@ class MainWindow(QMainWindow):
         self.refresh_calendar()
 
     def refresh_tasks(self):
-        tasks = (
-            self.database.search_tasks(self.search.text())
-            if self.search.text().strip()
-            else self.database.list_tasks()
-        )
+        status = {"All status": "all", "Open": "open", "Completed": "completed"}[self.status_filter.currentText()]
+        priority = {"All priorities": "all", "High": "high", "Medium": "medium", "Low": "low"}[self.priority_filter.currentText()]
+        category = "all" if self.category_filter.currentIndex() == 0 else self.category_filter.currentText()
+        recurrence = {"All recurrence": "all", "None": "none", "Daily": "daily", "Weekly": "weekly", "Monthly": "monthly"}[self.recurrence_filter.currentText()]
+        date_from = self.filter_from.selectedDate().toString("yyyy-MM-dd") if self.date_filter_toggle.isChecked() else None
+        date_to = self.filter_to.selectedDate().toString("yyyy-MM-dd") if self.date_filter_toggle.isChecked() else None
+        if date_from and date_to and date_from > date_to:
+            date_from, date_to = date_to, date_from
+        tasks = self.database.filtered_tasks(self.search.text(), status, priority, category, recurrence, date_from, date_to)
         self.populate(self.task_list, tasks)
+
+    def toggle_date_filters(self, checked):
+        self.filter_from.setVisible(checked)
+        self.filter_to.setVisible(checked)
+        self.refresh_tasks()
+
+    def reset_filters(self):
+        for widget in (self.status_filter, self.priority_filter, self.category_filter, self.recurrence_filter):
+            widget.setCurrentIndex(0)
+        self.date_filter_toggle.setChecked(False)
+        self.search.clear()
+        self.refresh_tasks()
+
+    def refresh_dashboard(self):
+        date_from = self.filter_from.selectedDate().toString("yyyy-MM-dd") if self.date_filter_toggle.isChecked() else None
+        date_to = self.filter_to.selectedDate().toString("yyyy-MM-dd") if self.date_filter_toggle.isChecked() else None
+        if date_from and date_to and date_from > date_to:
+            date_from, date_to = date_to, date_from
+        row, categories = self.database.productivity_stats(date_from, date_to)
+        self.dashboard.update_stats(row, categories, date_from, date_to)
 
     def refresh_agenda(self):
         q = self.agenda_date.selectedDate()

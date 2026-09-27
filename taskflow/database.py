@@ -154,6 +154,71 @@ class Database:
             (source_id, due_date),
         ).fetchone() is not None
 
+    def filtered_tasks(self, query="", status="all", priority="all", category="all",
+                       recurrence="all", date_from=None, date_to=None):
+        assert self.connection is not None
+        clauses = []
+        params = []
+        if query.strip():
+            term = f"%{query.strip()}%"
+            clauses.append("(title LIKE ? OR description LIKE ? OR category LIKE ? OR tags LIKE ?)")
+            params.extend([term, term, term, term])
+        if status == "open":
+            clauses.append("completed = 0")
+        elif status == "completed":
+            clauses.append("completed = 1")
+        if priority != "all":
+            clauses.append("priority = ?")
+            params.append(priority)
+        if category != "all":
+            clauses.append("category = ?")
+            params.append(category)
+        if recurrence != "all":
+            clauses.append("recurrence = ?")
+            params.append(recurrence)
+        if date_from:
+            clauses.append("due_date >= ?")
+            params.append(date_from)
+        if date_to:
+            clauses.append("due_date <= ?")
+            params.append(date_to)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return list(self.connection.execute(
+            f"""SELECT * FROM tasks{where}
+            ORDER BY completed ASC, due_date IS NULL, due_date ASC,
+                     start_time IS NULL, start_time ASC, id DESC""",
+            params,
+        ))
+
+    def productivity_stats(self, date_from=None, date_to=None):
+        assert self.connection is not None
+        clauses = []
+        params = []
+        if date_from:
+            clauses.append("due_date >= ?")
+            params.append(date_from)
+        if date_to:
+            clauses.append("due_date <= ?")
+            params.append(date_to)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        row = self.connection.execute(
+            f"""SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) AS completed,
+                SUM(CASE WHEN completed = 0 THEN 1 ELSE 0 END) AS open,
+                SUM(CASE WHEN priority = 'high' AND completed = 0 THEN 1 ELSE 0 END) AS high_open
+                FROM tasks{where}""",
+            params,
+        ).fetchone()
+        category_rows = self.connection.execute(
+            f"""SELECT category, COUNT(*) AS total,
+                SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) AS completed
+                FROM tasks{where}
+                GROUP BY category ORDER BY total DESC""",
+            params,
+        ).fetchall()
+        return row, category_rows
+
     def close(self) -> None:
         if self.connection is not None:
             self.connection.close()
