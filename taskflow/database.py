@@ -1,6 +1,6 @@
 from pathlib import Path
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 APP_DIR = Path.home() / "AppData" / "Local" / "TaskFlow"
 DB_PATH = APP_DIR / "taskflow.db"
@@ -26,6 +26,7 @@ class Database:
                 priority TEXT NOT NULL DEFAULT 'medium',
                 category TEXT NOT NULL DEFAULT 'Personal',
                 tags TEXT NOT NULL DEFAULT '',
+                recurrence TEXT NOT NULL DEFAULT 'none',
                 completed INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -36,6 +37,7 @@ class Database:
         self._add_column_if_missing("tasks", "end_time", "TEXT")
         self._add_column_if_missing("tasks", "category", "TEXT NOT NULL DEFAULT 'Personal'")
         self._add_column_if_missing("tasks", "tags", "TEXT NOT NULL DEFAULT ''")
+        self._add_column_if_missing("tasks", "recurrence", "TEXT NOT NULL DEFAULT 'none'")
         self.connection.commit()
 
     def _add_column_if_missing(self, table: str, column: str, definition: str) -> None:
@@ -44,38 +46,27 @@ class Database:
         if column not in columns:
             self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
-    def add_task(
-        self,
-        title: str,
-        description: str = "",
-        due_date: str | None = None,
-        start_time: str | None = None,
-        end_time: str | None = None,
-        priority: str = "medium",
-        category: str = "Personal",
-        tags: str = "",
-    ) -> int:
+    def add_task(self, title, description="", due_date=None, start_time=None, end_time=None,
+                 priority="medium", category="Personal", tags="", recurrence="none") -> int:
         assert self.connection is not None
         cursor = self.connection.execute(
             """INSERT INTO tasks
-            (title, description, due_date, start_time, end_time, priority, category, tags)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (title, description, due_date, start_time, end_time, priority, category, tags),
+            (title, description, due_date, start_time, end_time, priority, category, tags, recurrence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (title, description, due_date, start_time, end_time, priority, category, tags, recurrence),
         )
         self.connection.commit()
         return int(cursor.lastrowid)
 
-    def update_task(self, task_id: int, **fields: object) -> None:
+    def update_task(self, task_id: int, **fields) -> None:
         assert self.connection is not None
-        allowed = {"title", "description", "due_date", "start_time", "end_time", "priority", "category", "tags", "completed"}
-        updates = {key: value for key, value in fields.items() if key in allowed}
+        allowed = {"title", "description", "due_date", "start_time", "end_time",
+                   "priority", "category", "tags", "recurrence", "completed"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return
         clause = ", ".join(f"{key} = ?" for key in updates)
-        self.connection.execute(
-            f"UPDATE tasks SET {clause} WHERE id = ?",
-            (*updates.values(), task_id),
-        )
+        self.connection.execute(f"UPDATE tasks SET {clause} WHERE id = ?", (*updates.values(), task_id))
         self.connection.commit()
 
     def delete_task(self, task_id: int) -> None:
@@ -83,11 +74,11 @@ class Database:
         self.connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         self.connection.commit()
 
-    def get_task(self, task_id: int) -> sqlite3.Row | None:
+    def get_task(self, task_id: int):
         assert self.connection is not None
         return self.connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
 
-    def list_tasks(self, include_completed: bool = True) -> list[sqlite3.Row]:
+    def list_tasks(self, include_completed=True) -> list[sqlite3.Row]:
         assert self.connection is not None
         where = "" if include_completed else "WHERE completed = 0"
         return list(self.connection.execute(
@@ -100,10 +91,15 @@ class Database:
     def tasks_for_date(self, selected_date: date) -> list[sqlite3.Row]:
         assert self.connection is not None
         return list(self.connection.execute(
-            """SELECT * FROM tasks
-            WHERE due_date = ?
-            ORDER BY completed ASC, start_time IS NULL, start_time ASC, id DESC""",
+            "SELECT * FROM tasks WHERE due_date = ? ORDER BY completed ASC, start_time IS NULL, start_time ASC, id DESC",
             (selected_date.isoformat(),),
+        ))
+
+    def tasks_for_range(self, start: date, end: date) -> list[sqlite3.Row]:
+        assert self.connection is not None
+        return list(self.connection.execute(
+            "SELECT * FROM tasks WHERE due_date BETWEEN ? AND ? ORDER BY due_date, start_time, id",
+            (start.isoformat(), end.isoformat()),
         ))
 
     def search_tasks(self, query: str) -> list[sqlite3.Row]:
