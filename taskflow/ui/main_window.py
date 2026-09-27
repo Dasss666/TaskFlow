@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
-from PySide6.QtCore import QDate, QTime, Qt, QSettings, QPropertyAnimation, QEasingCurve, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QDate, QTime, Qt, QSettings, QPropertyAnimation, QEasingCurve, Signal, Property
+from PySide6.QtGui import QAction, QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QCalendarWidget, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
@@ -124,6 +124,71 @@ class TaskDialog(QDialog):
             return
         super().accept()
 
+
+
+class AnimatedCheck(QWidget):
+    checkedChanged = Signal(bool)
+
+    def __init__(self, checked=False, parent=None):
+        super().__init__(parent)
+        self._checked = bool(checked)
+        self._progress = 1.0 if self._checked else 0.0
+        self.setFixedSize(28, 28)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Mark as completed")
+
+    def get_progress(self):
+        return self._progress
+
+    def set_progress(self, value):
+        self._progress = float(value)
+        self.update()
+
+    progress = Property(float, get_progress, set_progress)
+
+    def setChecked(self, checked, animated=True):
+        checked = bool(checked)
+        self._checked = checked
+        animation = QPropertyAnimation(self, b"progress", self)
+        animation.setDuration(180)
+        animation.setStartValue(self._progress)
+        animation.setEndValue(1.0 if checked else 0.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._animation = animation
+        animation.finished.connect(lambda: self.checkedChanged.emit(self._checked))
+        animation.start()
+
+    def isChecked(self):
+        return self._checked
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setChecked(not self._checked)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        center = self.rect().center()
+        radius = 9.5
+        accent = QColor("#ff8585")
+        track = QColor(self.palette().mid().color())
+        track.setAlpha(95)
+        painter.setBrush(QBrush(track))
+        painter.setPen(QPen(track, 1.5))
+        painter.drawEllipse(center, radius, radius)
+        if self._progress > 0:
+            fill = QColor(accent)
+            fill.setAlpha(int(255 * self._progress))
+            painter.setBrush(QBrush(fill))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(center, radius, radius)
+            painter.setPen(QPen(Qt.GlobalColor.white, 2.0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawLine(center.x() - 5, center.y(), center.x() - 1, center.y() + 4)
+            painter.drawLine(center.x() - 1, center.y() + 4, center.x() + 6, center.y() - 5)
 
 class TaskCard(QFrame):
     editRequested = Signal(int)
