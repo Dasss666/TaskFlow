@@ -18,6 +18,11 @@ THEMES = {
         #taskCard[completed="true"] { opacity:0.72; }
         #taskCardTitle { font-size:15px; font-weight:650; }
         #taskCardTags { font-size:12px; }
+        #tagBadge { background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12); border-radius:9px; padding:2px 7px; color:#cbd2df; font-size:11px; }
+        #categoryBadge { font-size:12px; }
+        #cardMoreButton { min-width:28px; max-width:28px; padding:3px; border:0; background:transparent; font-size:18px; }
+        #floatingAddButton { background:#ff8585; color:#ffffff; border:0; border-radius:32px; font-size:30px; font-weight:300; }
+        #floatingAddButton:hover { background:#ff9b9b; }
         #cardMoreButton { min-width:28px; max-width:28px; padding:3px; border:0; background:transparent; font-size:18px; }
         #priority_high { color:#ff8f8f; font-size:11px; font-weight:700; }
         #priority_medium { color:#9ca9ff; font-size:11px; font-weight:700; }
@@ -67,6 +72,11 @@ THEMES = {
         #taskCard[completed="true"] { opacity:0.72; }
         #taskCardTitle { font-size:15px; font-weight:650; }
         #taskCardTags { font-size:12px; }
+        #tagBadge { background:#eef0f4; border:1px solid #d5d9e0; border-radius:9px; padding:2px 7px; color:#596273; font-size:11px; }
+        #categoryBadge { font-size:12px; }
+        #cardMoreButton { min-width:28px; max-width:28px; padding:3px; border:0; background:transparent; font-size:18px; }
+        #floatingAddButton { background:#ff8585; color:#ffffff; border:0; border-radius:32px; font-size:30px; font-weight:300; }
+        #floatingAddButton:hover { background:#ff7070; }
         #priority_high { color:#c03d48; font-size:11px; font-weight:700; }
         #priority_medium { color:#5b5fd6; font-size:11px; font-weight:700; }
         #priority_low { color:#19866f; font-size:11px; font-weight:700; }
@@ -112,6 +122,11 @@ THEMES = {
         #taskCard[completed="true"] { opacity:0.72; }
         #taskCardTitle { font-size:15px; font-weight:650; }
         #taskCardTags { font-size:12px; }
+        #tagBadge { background:rgba(255,47,207,0.12); border:1px solid #7b2cff; border-radius:9px; padding:2px 7px; color:#ff9be8; font-size:11px; }
+        #categoryBadge { font-size:12px; }
+        #cardMoreButton { min-width:28px; max-width:28px; padding:3px; border:0; background:transparent; font-size:18px; }
+        #floatingAddButton { background:#ff2fcf; color:#ffffff; border:0; border-radius:32px; font-size:30px; font-weight:300; }
+        #floatingAddButton:hover { background:#ff4fd8; }
         #priority_high { color:#ff6b9b; font-size:11px; font-weight:700; }
         #priority_medium { color:#8b7cff; font-size:11px; font-weight:700; }
         #priority_low { color:#48e0c1; font-size:11px; font-weight:700; }
@@ -157,6 +172,11 @@ THEMES = {
         #taskCard[completed="true"] { opacity:0.72; }
         #taskCardTitle { font-size:15px; font-weight:650; }
         #taskCardTags { font-size:12px; }
+        #tagBadge { background:rgba(69,215,255,0.10); border:1px solid #237c99; border-radius:9px; padding:2px 7px; color:#aeeaff; font-size:11px; }
+        #categoryBadge { font-size:12px; }
+        #cardMoreButton { min-width:28px; max-width:28px; padding:3px; border:0; background:transparent; font-size:18px; }
+        #floatingAddButton { background:#ff8585; color:#ffffff; border:0; border-radius:32px; font-size:30px; font-weight:300; }
+        #floatingAddButton:hover { background:#ff9b9b; }
         #priority_high { color:#ff8b8b; font-size:11px; font-weight:700; }
         #priority_medium { color:#77b9ff; font-size:11px; font-weight:700; }
         #priority_low { color:#62c4b2; font-size:11px; font-weight:700; }
