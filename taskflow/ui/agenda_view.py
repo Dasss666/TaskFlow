@@ -305,9 +305,23 @@ class AgendaTimeline(QWidget):
             painter.setBrush(QBrush(fill))
             painter.setPen(QPen(category, 1.5))
             painter.drawRoundedRect(rect, 10, 10)
-            painter.setPen(QPen(text, 1))
+
+            icon_center = QPointF(rect.x() + 28, rect.y() + 21)
+            icon_bg = QColor(category)
+            icon_bg.setAlpha(55)
+            painter.setBrush(QBrush(icon_bg))
+            painter.setPen(QPen(category, 1.0))
+            painter.drawEllipse(icon_center, 14, 14)
+            painter.setPen(QPen(category, 1))
+            painter.setFont(QFont("Segoe UI Emoji", 12))
             painter.drawText(
-                int(rect.x() + 14), int(rect.y() + 27), task["title"]
+                int(rect.x() + 14), int(rect.y() + 12),
+                28, 18, Qt.AlignmentFlag.AlignCenter, smart_icon(task)
+            )
+            painter.setPen(QPen(text, 1))
+            painter.setFont(QFont())
+            painter.drawText(
+                int(rect.x() + 50), int(rect.y() + 27), task["title"]
             )
             y += 48
 
