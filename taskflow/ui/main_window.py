@@ -554,6 +554,10 @@ class MainWindow(QMainWindow):
     def _build_agenda_page(self):
         self.agenda = AgendaView()
         self.agenda.taskActivated.connect(self.edit_task_by_id)
+        self.agenda.dateChanged.connect(lambda value: self.refresh_agenda())
+        self.agenda.newTaskRequested.connect(self.new_task)
+        self.agenda.timeline.taskMoved.connect(self.move_agenda_task)
+        self.agenda.timeline.taskResized.connect(self.resize_agenda_task)
         self.stack.addWidget(self.agenda)
 
     def _apply_theme(self, theme_name):
@@ -572,6 +576,14 @@ class MainWindow(QMainWindow):
         save_theme(self.settings, theme_name)
         self._apply_theme(theme_name)
         self._update_theme_actions()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "sidebar"):
+            if self.width() < 980 and self.sidebar.expanded:
+                self.sidebar.toggle_sidebar()
+            elif self.width() >= 1120 and not self.sidebar.expanded:
+                self.sidebar.toggle_sidebar()
 
     def show_page(self, index):
         self.stack.setCurrentIndex(index)
@@ -716,12 +728,39 @@ class MainWindow(QMainWindow):
         if self.stack.currentIndex() == 0:
             self.refresh_tasks()
 
-    def new_task(self):
+    def new_task(self, preferred_date=None):
         dialog = TaskDialog(self)
+        if preferred_date is not None:
+            dialog.date.setSelectedDate(
+                QDate(preferred_date.year, preferred_date.month, preferred_date.day)
+            )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.database.add_task(**dialog.values())
             materialize_recurring_tasks(self.database)
             self.refresh()
+
+    def move_agenda_task(self, task_id, due_date, start_time, end_time):
+        task = self.database.get_task(task_id)
+        if not task:
+            return
+        self.database.update_task(
+            task_id,
+            due_date=due_date,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        self.refresh()
+
+    def resize_agenda_task(self, task_id, start_time, end_time):
+        task = self.database.get_task(task_id)
+        if not task:
+            return
+        self.database.update_task(
+            task_id,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        self.refresh()
 
     def set_task_completed(self, task_id, completed):
         task = self.database.get_task(task_id)
