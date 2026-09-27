@@ -239,10 +239,7 @@ class AgendaTimeline(QWidget):
             x += width + 6
 
     def _paint_current_time(self, painter):
-        if not self._tasks:
-            return
-        today = getattr(self.parent(), "selected_date", None)
-        if today != date.today():
+        if self.selected_date != date.today():
             return
 
         now = datetime.now()
