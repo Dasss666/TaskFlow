@@ -255,10 +255,10 @@ def stylesheet(theme_name: str) -> str:
             border-radius: 19px;
             font-weight: 700;
         }
-        #dayButton[today="true"] {
+        #dayButton[today=true] {
             border-color: #ff8585;
         }
-        #dayButton[today="true"]:checked {
+        #dayButton[today=true]:checked {
             border-color: #ff8585;
         }
         #agendaMonthMenu {
