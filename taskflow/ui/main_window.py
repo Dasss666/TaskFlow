@@ -1,12 +1,12 @@
 from datetime import date, timedelta
 
-from PySide6.QtCore import Qt, QSettings, QPropertyAnimation, QEasingCurve, Signal
+from PySide6.QtCore import QDate, QTime, Qt, QSettings, QPropertyAnimation, QEasingCurve, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
-    QPlainTextEdit, QPushButton, QScrollArea, QStackedWidget, QTimeEdit,
-    QToolButton, QVBoxLayout, QWidget
+    QCalendarWidget, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox,
+    QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
+    QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QStackedWidget,
+    QTimeEdit, QToolButton, QVBoxLayout, QWidget
 )
 
 from taskflow.database import Database
@@ -32,8 +32,8 @@ class TaskDialog(QDialog):
         self.title = QLineEdit()
         self.description = QPlainTextEdit()
         self.description.setFixedHeight(80)
-        self.date = __import__("PySide6.QtWidgets", fromlist=["QCalendarWidget"]).QCalendarWidget()
-        self.date.setSelectedDate(__import__("PySide6.QtCore", fromlist=["QDate"]).QDate.currentDate())
+        self.date = QCalendarWidget()
+        self.date.setSelectedDate(QDate.currentDate())
 
         self.all_day = QCheckBox("All day")
         self.all_day.toggled.connect(self._toggle_time_fields)
@@ -81,17 +81,14 @@ class TaskDialog(QDialog):
             self.title.setText(task["title"])
             self.description.setPlainText(task["description"] or "")
             if task["due_date"]:
-                from PySide6.QtCore import QDate
                 self.date.setSelectedDate(QDate.fromString(task["due_date"], "yyyy-MM-dd"))
 
             start = task["start_time"] or ""
             end = task["end_time"] or ""
             self.all_day.setChecked(not start or not end)
             if start:
-                from PySide6.QtCore import QTime
                 self.start.setTime(QTime.fromString(start, "HH:mm"))
             if end:
-                from PySide6.QtCore import QTime
                 self.end.setTime(QTime.fromString(end, "HH:mm"))
 
             self.priority.setCurrentText(task["priority"])
@@ -130,6 +127,7 @@ class TaskDialog(QDialog):
 
 class TaskCard(QFrame):
     editRequested = Signal(int)
+    deleteRequested = Signal(int)
     completionChanged = Signal(int, bool)
 
     def __init__(self, task, parent=None):
@@ -177,13 +175,31 @@ class TaskCard(QFrame):
 
         root.addLayout(body, 1)
 
+        actions = QVBoxLayout()
+        actions.setSpacing(6)
         priority = QLabel(task["priority"].upper())
         priority.setObjectName(f"priority_{task['priority']}")
-        root.addWidget(priority, 0, Qt.AlignmentFlag.AlignTop)
+        actions.addWidget(priority, 0, Qt.AlignmentFlag.AlignRight)
+        more = QToolButton()
+        more.setText("⋯")
+        more.setObjectName("cardMoreButton")
+        more.clicked.connect(self._show_menu)
+        actions.addWidget(more, 0, Qt.AlignmentFlag.AlignRight)
+        root.addLayout(actions)
 
         if task["completed"]:
             title.setProperty("completed", True)
             self.setProperty("completed", True)
+
+    def _show_menu(self):
+        menu = QMenu(self)
+        edit = menu.addAction("Edit")
+        delete = menu.addAction("Delete")
+        chosen = menu.exec(self.mapToGlobal(self.rect().topRight()))
+        if chosen == edit:
+            self.editRequested.emit(self.task_id)
+        elif chosen == delete:
+            self.deleteRequested.emit(self.task_id)
 
     def mouseDoubleClickEvent(self, event):
         self.editRequested.emit(self.task_id)
@@ -410,6 +426,11 @@ class MainWindow(QMainWindow):
         self.category_filter.addItems(["All categories"] + CATEGORIES)
         self.recurrence_filter = QComboBox()
         self.recurrence_filter.addItems(["All recurrence", "None", "Daily", "Weekly", "Monthly"])
+        self.date_filter = QCheckBox("Date range")
+        self.date_from = QDateEdit(QDate.currentDate())
+        self.date_from.setCalendarPopup(True)
+        self.date_to = QDateEdit(QDate.currentDate().addDays(30))
+        self.date_to.setCalendarPopup(True)
 
         for widget in (
             self.status_filter, self.priority_filter,
@@ -417,6 +438,16 @@ class MainWindow(QMainWindow):
         ):
             widget.currentIndexChanged.connect(self.refresh_tasks)
             filter_layout.addWidget(widget)
+        self.date_filter.toggled.connect(self.refresh_tasks)
+        self.date_from.dateChanged.connect(self.refresh_tasks)
+        self.date_to.dateChanged.connect(self.refresh_tasks)
+        filter_layout.addWidget(self.date_filter)
+        filter_layout.addWidget(self.date_from)
+        filter_layout.addWidget(self.date_to)
+        self.date_from.setVisible(False)
+        self.date_to.setVisible(False)
+        self.date_filter.toggled.connect(self.date_from.setVisible)
+        self.date_filter.toggled.connect(self.date_to.setVisible)
 
         reset = QPushButton("Reset")
         reset.clicked.connect(self.reset_filters)
@@ -538,6 +569,11 @@ class MainWindow(QMainWindow):
 
         start = date.today()
         end = start + timedelta(days=30)
+        if self.date_filter.isChecked():
+            start = self.date_from.date().toPython()
+            end = self.date_to.date().toPython()
+            if start > end:
+                start, end = end, start
         tasks = self.database.filtered_tasks(
             self.search.text(), status, priority, category, recurrence,
             start.isoformat(), end.isoformat()
@@ -562,6 +598,7 @@ class MainWindow(QMainWindow):
             for task in groups[day]:
                 card = TaskCard(task)
                 card.editRequested.connect(self.edit_task_by_id)
+                card.deleteRequested.connect(self.delete_task_by_id)
                 card.completionChanged.connect(self.set_task_completed)
                 section_layout.addWidget(card)
             self.task_layout.addWidget(section)
@@ -578,6 +615,9 @@ class MainWindow(QMainWindow):
         ):
             widget.setCurrentIndex(0)
         self.search.clear()
+        self.date_filter.setChecked(False)
+        self.date_from.setDate(QDate.currentDate())
+        self.date_to.setDate(QDate.currentDate().addDays(30))
         self.refresh_tasks()
 
     def refresh_dashboard(self):
