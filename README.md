@@ -7,13 +7,14 @@ A Windows desktop task manager and personal agenda built with Python, PySide6 an
 - Completion state
 - Priority, category and tags
 - Date and start/end time
-- Daily agenda
-- Weekly view
-- Monthly calendar
+- Responsive collapsible navigation: Tasks, Dashboard and Agenda
+- Tasks grouped by Today, Tomorrow and following dates
+- Interactive daily agenda with week date strip and time timeline
+- Advanced task filters (status, priority, category, recurrence and date range)
 - Search
 - Customizable themes: Midnight, Light, Cyberpunk and Ocean
 - Persistent theme preference
-- Recurring task metadata (none/daily/weekly/monthly)
+- Recurring tasks: daily, weekly and monthly with generated future occurrences
 - Windows tray notifications for scheduled tasks
 - JSON import/export
 - Local SQLite persistence
@@ -42,6 +43,9 @@ For a local installer build, install Inno Setup and run:
 ```powershell
 iscc installer/TaskFlow.iss
 ```
+
+## Current UI direction
+The 0.3.0 interface focuses the main workflow on Tasks, Dashboard and Agenda. The Dashboard remains the productivity overview, while Agenda provides a responsive day timeline inspired by modern calendar/task-planning applications.
 
 ## Roadmap
 - Productivity history and charts
