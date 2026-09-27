@@ -36,12 +36,19 @@ ICON_RULES = [
 ]
 
 
+def _value(task, key, default=""):
+    try:
+        return task[key]
+    except (KeyError, TypeError, IndexError):
+        return default
+
+
 def smart_icon(task) -> str:
     """Pick a lightweight icon from task title/category/tags/description."""
-    title = str(task.get("title") or "").lower()
-    category = str(task.get("category") or "").lower()
-    tags = str(task.get("tags") or "").lower()
-    description = str(task.get("description") or "").lower()
+    title = str(_value(task, "title") or "").lower()
+    category = str(_value(task, "category") or "").lower()
+    tags = str(_value(task, "tags") or "").lower()
+    description = str(_value(task, "description") or "").lower()
     text = " ".join((title, tags, description))
 
     for keywords, icon in ICON_RULES:
@@ -60,7 +67,7 @@ def smart_icon(task) -> str:
 
 
 def icon_color(task) -> QColor:
-    category = str(task.get("category") or "Personal")
+    category = str(_value(task, "category") or "Personal")
     return QColor(CATEGORY_COLORS.get(category, "#9d7cff"))
 
 
