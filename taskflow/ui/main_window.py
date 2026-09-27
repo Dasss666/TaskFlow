@@ -125,6 +125,8 @@ class MainWindow(QMainWindow):
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
+        self.settings = QSettings("Dasss666", "TaskFlow")
+        self.current_theme = load_theme(self.settings)
         self.setWindowTitle("TaskFlow")
         self.resize(1200, 780)
         self._build_menu()
@@ -317,10 +319,8 @@ class MainWindow(QMainWindow):
         )
         item.setData(Qt.ItemDataRole.UserRole, task["id"])
         item.setToolTip(
-            f"Priority: {task['priority']}
-"
-            f"Tags: {task['tags'] or '-'}
-"
+            f"Priority: {task['priority']}\\n"
+            f"Tags: {task['tags'] or '-'}\\n"
             f"{task['description'] or ''}"
         )
         if task["completed"]:
