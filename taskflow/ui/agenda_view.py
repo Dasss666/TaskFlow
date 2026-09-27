@@ -17,8 +17,9 @@ class AgendaTimeline(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._all_day_height = self.ALL_DAY_HEIGHT
         self.setMinimumHeight(
-            self.ALL_DAY_HEIGHT + (self.END_HOUR - self.START_HOUR) * self.HOUR_HEIGHT
+            self._all_day_height + (self.END_HOUR - self.START_HOUR) * self.HOUR_HEIGHT
         )
         self.setMouseTracking(True)
         self._tasks = []
@@ -76,6 +77,12 @@ class AgendaTimeline(QWidget):
         painter.drawText(20, 31, "ALL DAY")
 
         all_day = [t for t in self._tasks if not t["start_time"] or not t["end_time"]]
+        self._all_day_height = max(self.ALL_DAY_HEIGHT, 16 + len(all_day) * 48)
+        self.setMinimumHeight(
+            self._all_day_height + (self.END_HOUR - self.START_HOUR) * self.HOUR_HEIGHT
+        )
+        painter.setPen(QPen(grid_strong, 1))
+        painter.drawLine(self.TASK_X, self._all_day_height, self.width(), self._all_day_height)
         y = 10
         for task in all_day:
             rect = QRectF(self.TASK_X, y, max(260, self.width() - self.TASK_X - 34), 42)
@@ -89,7 +96,7 @@ class AgendaTimeline(QWidget):
 
         # Hour grid
         for hour in range(self.START_HOUR, self.END_HOUR + 1):
-            y = self.ALL_DAY_HEIGHT + (hour - self.START_HOUR) * self.HOUR_HEIGHT
+            y = self._all_day_height + (hour - self.START_HOUR) * self.HOUR_HEIGHT
             painter.setPen(QPen(grid_strong, 1))
             painter.drawLine(self.LEFT_LABEL, int(y), self.width(), int(y))
             painter.setPen(QPen(muted, 1))
