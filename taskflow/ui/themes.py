@@ -18,6 +18,10 @@ THEMES = {
         #taskCard[completed="true"] { opacity:0.72; }
         #taskCardTitle { font-size:15px; font-weight:650; }
         #taskCardTags { font-size:12px; }
+        #cardMoreButton { min-width:28px; max-width:28px; padding:3px; border:0; background:transparent; font-size:18px; }
+        #cardMoreButton { min-width:28px; max-width:28px; padding:3px; border:0; background:transparent; font-size:18px; }
+        #cardMoreButton { min-width:28px; max-width:28px; padding:3px; border:0; background:transparent; font-size:18px; }
+        #cardMoreButton { min-width:28px; max-width:28px; padding:3px; border:0; background:transparent; font-size:18px; }
         #priority_high { color:#ff8f8f; font-size:11px; font-weight:700; }
         #priority_medium { color:#9ca9ff; font-size:11px; font-weight:700; }
         #priority_low { color:#67cdb8; font-size:11px; font-weight:700; }
