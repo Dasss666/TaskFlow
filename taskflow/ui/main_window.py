@@ -218,6 +218,9 @@ class MainWindow(QMainWindow):
         layout.addLayout(actions)
         self.stack.addWidget(tasks_page)
 
+        self.dashboard = DashboardView()
+        self.stack.addWidget(self.dashboard)
+
         agenda_page = QWidget()
         layout = QVBoxLayout(agenda_page)
         layout.addWidget(QLabel("Daily agenda"))
