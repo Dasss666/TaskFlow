@@ -221,4 +221,48 @@ def save_theme(settings: QSettings, theme_name: str) -> None:
 
 
 def stylesheet(theme_name: str) -> str:
-    return THEMES.get(theme_name, THEMES[DEFAULT_THEME])
+    base = THEMES.get(theme_name, THEMES[DEFAULT_THEME])
+    agenda_header = """
+        #agendaMonthButton {
+            background: transparent;
+            border: 0;
+            padding: 4px 2px;
+            font-size: 23px;
+            font-weight: 700;
+            min-width: 210px;
+        }
+        #agendaMonthButton:hover {
+            background: rgba(255,255,255,18);
+        }
+        #agendaWeekLabel {
+            font-size: 13px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 8px;
+        }
+        #agendaNavButton {
+            min-width: 40px;
+            max-width: 40px;
+            min-height: 38px;
+            max-height: 38px;
+            padding: 4px;
+            font-size: 25px;
+            border-radius: 19px;
+        }
+        #agendaTodayButton {
+            min-height: 38px;
+            padding: 7px 16px;
+            border-radius: 19px;
+            font-weight: 700;
+        }
+        #dayButton[today="true"] {
+            border-color: #ff8585;
+        }
+        #dayButton[today="true"]:checked {
+            border-color: #ff8585;
+        }
+        #agendaMonthMenu {
+            padding: 7px;
+        }
+    """
+    return base + agenda_header
