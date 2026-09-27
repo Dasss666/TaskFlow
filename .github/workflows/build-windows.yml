@@ -17,9 +17,21 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Build executable
-        run: pyinstaller --noconfirm --windowed --name TaskFlow taskflow/__main__.py
-      - name: Upload artifact
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name TaskFlow taskflow/__main__.py
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        run: iscc installer/TaskFlow.iss
+
+      - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
           name: TaskFlow-Windows
-          path: dist/TaskFlow
+          path: dist/TaskFlow.exe
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaskFlow-Windows-Installer
+          path: dist/installer/TaskFlow-Setup.exe
