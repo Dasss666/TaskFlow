@@ -582,8 +582,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, "sidebar"):
             if self.width() < 980 and self.sidebar.expanded:
                 self.sidebar.toggle_sidebar()
-            elif self.width() >= 1120 and not self.sidebar.expanded:
-                self.sidebar.toggle_sidebar()
 
     def show_page(self, index):
         self.stack.setCurrentIndex(index)
