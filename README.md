@@ -11,7 +11,8 @@ A Windows desktop task manager and personal agenda built with Python, PySide6 an
 - Weekly view
 - Monthly calendar
 - Search
-- Dark desktop theme
+- Customizable themes: Midnight, Light, Cyberpunk and Ocean
+- Persistent theme preference
 - Recurring task metadata (none/daily/weekly/monthly)
 - Windows tray notifications for scheduled tasks
 - JSON import/export
@@ -27,16 +28,22 @@ python -m taskflow
 
 ## Build Windows executable
 ```powershell
-pyinstaller --noconfirm --windowed --name TaskFlow taskflow/__main__.py
+pyinstaller --noconfirm --clean --onefile --windowed --name TaskFlow taskflow/__main__.py
 ```
 
-The executable will be generated under `dist/TaskFlow/`.
+The standalone executable is generated at `dist/TaskFlow.exe`.
+
+## Build the Windows installer
+The repository includes an Inno Setup configuration in `installer/TaskFlow.iss`.
+
+GitHub Actions automatically builds the standalone executable, creates `TaskFlow-Setup.exe`, and uploads both files as workflow artifacts.
+
+For a local installer build, install Inno Setup and run:
+```powershell
+iscc installer/TaskFlow.iss
+```
 
 ## Roadmap
-- Drag-and-drop scheduling
-- Rich recurring-event generation
-- Productivity statistics
-- Advanced filters
-- Custom themes
-- Installer/release automation
+- Productivity history and charts
+- Saved filter presets
 - Optional cloud synchronization
