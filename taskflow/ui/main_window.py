@@ -1,17 +1,19 @@
 from datetime import date, timedelta
-from PySide6.QtCore import Qt, QDate, QTime
+
+from PySide6.QtCore import Qt, QSettings, QPropertyAnimation, QEasingCurve, Signal
 from PySide6.QtGui import QAction
-from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
-    QCalendarWidget, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QStackedWidget,
-    QTimeEdit, QVBoxLayout, QWidget
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+    QPlainTextEdit, QPushButton, QScrollArea, QStackedWidget, QTimeEdit,
+    QToolButton, QVBoxLayout, QWidget
 )
+
 from taskflow.database import Database
 from taskflow.services.data_transfer import export_tasks, import_tasks
 from taskflow.services.notifications import NotificationService
-from taskflow.ui.week_view import WeekView
+from taskflow.services.recurrence import materialize_recurring_tasks
+from taskflow.ui.agenda_view import AgendaView
 from taskflow.ui.dashboard import DashboardView
 from taskflow.ui.themes import load_theme, save_theme, stylesheet, THEMES
 
@@ -30,8 +32,8 @@ class TaskDialog(QDialog):
         self.title = QLineEdit()
         self.description = QPlainTextEdit()
         self.description.setFixedHeight(80)
-        self.date = QCalendarWidget()
-        self.date.setSelectedDate(QDate.currentDate())
+        self.date = __import__("PySide6.QtWidgets", fromlist=["QCalendarWidget"]).QCalendarWidget()
+        self.date.setSelectedDate(__import__("PySide6.QtCore", fromlist=["QDate"]).QDate.currentDate())
 
         self.all_day = QCheckBox("All day")
         self.all_day.toggled.connect(self._toggle_time_fields)
@@ -79,20 +81,25 @@ class TaskDialog(QDialog):
             self.title.setText(task["title"])
             self.description.setPlainText(task["description"] or "")
             if task["due_date"]:
+                from PySide6.QtCore import QDate
                 self.date.setSelectedDate(QDate.fromString(task["due_date"], "yyyy-MM-dd"))
 
             start = task["start_time"] or ""
             end = task["end_time"] or ""
-            self.all_day.setChecked(not start or not end or (start == "00:00" and end == "00:00"))
-            if start and start != "00:00":
+            self.all_day.setChecked(not start or not end)
+            if start:
+                from PySide6.QtCore import QTime
                 self.start.setTime(QTime.fromString(start, "HH:mm"))
-            if end and end != "00:00":
+            if end:
+                from PySide6.QtCore import QTime
                 self.end.setTime(QTime.fromString(end, "HH:mm"))
 
             self.priority.setCurrentText(task["priority"])
             self.category.setCurrentText(task["category"] or "Personal")
             self.tags.setText(task["tags"] or "")
             self.recurrence.setCurrentText(task["recurrence"] or "none")
+        else:
+            self._toggle_time_fields(False)
 
     def _toggle_time_fields(self, checked):
         self.start.setEnabled(not checked)
@@ -121,28 +128,241 @@ class TaskDialog(QDialog):
         super().accept()
 
 
+class TaskCard(QFrame):
+    editRequested = Signal(int)
+    completionChanged = Signal(int, bool)
+
+    def __init__(self, task, parent=None):
+        super().__init__(parent)
+        self.task_id = int(task["id"])
+        self.setObjectName("taskCard")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        root = QHBoxLayout(self)
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(12)
+
+        self.check = QCheckBox()
+        self.check.setChecked(bool(task["completed"]))
+        self.check.setToolTip("Mark as completed")
+        self.check.toggled.connect(
+            lambda checked: self.completionChanged.emit(self.task_id, checked)
+        )
+        root.addWidget(self.check, 0, Qt.AlignmentFlag.AlignTop)
+
+        body = QVBoxLayout()
+        body.setSpacing(4)
+
+        title = QLabel(task["title"])
+        title.setObjectName("taskCardTitle")
+        title.setWordWrap(True)
+        body.addWidget(title)
+
+        meta = []
+        if task["start_time"] and task["end_time"]:
+            meta.append(f"{task['start_time']} – {task['end_time']}")
+        else:
+            meta.append("All day")
+        meta.append(task["category"] or "Personal")
+        if task["recurrence"] != "none":
+            meta.append(f"↻ {task['recurrence']}")
+        meta_label = QLabel("  •  ".join(meta))
+        meta_label.setObjectName("taskCardMeta")
+        body.addWidget(meta_label)
+
+        if task["tags"]:
+            tags = QLabel(" ".join(f"#{tag.strip()}" for tag in task["tags"].split(",") if tag.strip()))
+            tags.setObjectName("taskCardTags")
+            body.addWidget(tags)
+
+        root.addLayout(body, 1)
+
+        priority = QLabel(task["priority"].upper())
+        priority.setObjectName(f"priority_{task['priority']}")
+        root.addWidget(priority, 0, Qt.AlignmentFlag.AlignTop)
+
+        if task["completed"]:
+            title.setProperty("completed", True)
+            self.setProperty("completed", True)
+
+    def mouseDoubleClickEvent(self, event):
+        self.editRequested.emit(self.task_id)
+        super().mouseDoubleClickEvent(event)
+
+
+class Sidebar(QWidget):
+    pageRequested = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.expanded = True
+        self.setObjectName("sidebar")
+        self.setMinimumWidth(228)
+        self.setMaximumWidth(228)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 14, 12, 14)
+        layout.setSpacing(8)
+
+        self.toggle = QToolButton()
+        self.toggle.setText("☰")
+        self.toggle.setToolTip("Collapse navigation")
+        self.toggle.setObjectName("sidebarToggle")
+        self.toggle.clicked.connect(self.toggle_sidebar)
+        layout.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignLeft)
+
+        brand = QLabel("TaskFlow")
+        brand.setObjectName("sidebarBrand")
+        layout.addWidget(brand)
+        self.brand = brand
+
+        layout.addSpacing(12)
+
+        self.buttons = []
+        for label, icon, index in [
+            ("Tasks", "✓", 0),
+            ("Dashboard", "▦", 1),
+            ("Agenda", "◷", 2),
+        ]:
+            button = QPushButton(f"{icon}   {label}")
+            button.setCheckable(True)
+            button.setObjectName("navButton")
+            button.clicked.connect(lambda checked, i=index: self._select(i))
+            layout.addWidget(button)
+            self.buttons.append(button)
+
+        layout.addStretch()
+
+        hint = QLabel("TaskFlow\nYour day, organized.")
+        hint.setObjectName("sidebarHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        self.hint = hint
+
+        self._select(0)
+
+    def _select(self, index):
+        for i, button in enumerate(self.buttons):
+            button.setChecked(i == index)
+        self.pageRequested.emit(index)
+
+    def set_active(self, index):
+        for i, button in enumerate(self.buttons):
+            button.setChecked(i == index)
+
+    def toggle_sidebar(self):
+        self.expanded = not self.expanded
+        start = self.width()
+        end = 228 if self.expanded else 72
+
+        animation = QPropertyAnimation(self, b"minimumWidth", self)
+        animation.setDuration(180)
+        animation.setStartValue(start)
+        animation.setEndValue(end)
+        animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        max_animation = QPropertyAnimation(self, b"maximumWidth", self)
+        max_animation.setDuration(180)
+        max_animation.setStartValue(start)
+        max_animation.setEndValue(end)
+        max_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        self._animations = (animation, max_animation)
+        animation.start()
+        max_animation.start()
+
+        self.toggle.setToolTip("Expand navigation" if not self.expanded else "Collapse navigation")
+        self.brand.setVisible(self.expanded)
+        self.hint.setVisible(self.expanded)
+
+        for button, (label, icon, _) in zip(
+            self.buttons,
+            [("Tasks", "✓", 0), ("Dashboard", "▦", 1), ("Agenda", "◷", 2)],
+        ):
+            button.setText(f"{icon}   {label}" if self.expanded else icon)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
         self.settings = QSettings("Dasss666", "TaskFlow")
         self.current_theme = load_theme(self.settings)
+
         self.setWindowTitle("TaskFlow")
-        self.resize(1200, 780)
-        self._build_menu()
+        self.resize(1280, 820)
+        self.setMinimumSize(900, 620)
+
         self._build_ui()
         self._apply_theme(self.current_theme)
+
         self.notifications = NotificationService(self, self.database)
         self.refresh()
 
-    def _build_menu(self):
-        task_menu = self.menuBar().addMenu("Task")
-        new_action = QAction("New task", self)
-        new_action.setShortcut("Ctrl+N")
-        new_action.triggered.connect(self.new_task)
-        task_menu.addAction(new_action)
+    def _build_ui(self):
+        root = QWidget()
+        root.setObjectName("appRoot")
+        self.setCentralWidget(root)
 
-        data_menu = self.menuBar().addMenu("Data")
+        main = QHBoxLayout(root)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(0)
+
+        self.sidebar = Sidebar()
+        self.sidebar.pageRequested.connect(self.show_page)
+        main.addWidget(self.sidebar)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(28, 24, 28, 20)
+        content_layout.setSpacing(18)
+
+        topbar = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title = QLabel("TaskFlow")
+        title.setObjectName("appTitle")
+        subtitle = QLabel("Plan your tasks, keep your day in flow.")
+        subtitle.setObjectName("appSubtitle")
+        title_box.addWidget(title)
+        title_box.addWidget(subtitle)
+        topbar.addLayout(title_box)
+        topbar.addStretch()
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search tasks, tags, categories...")
+        self.search.setClearButtonEnabled(True)
+        self.search.setMinimumWidth(250)
+        self.search.textChanged.connect(self.search_changed)
+        topbar.addWidget(self.search)
+
+        add = QPushButton("+ New task")
+        add.setObjectName("primaryButton")
+        add.clicked.connect(self.new_task)
+        topbar.addWidget(add)
+
+        options = QToolButton()
+        options.setText("⚙")
+        options.setObjectName("iconButton")
+        options.setToolTip("Settings and data")
+        options.setMenu(self._build_options_menu(options))
+        options.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        topbar.addWidget(options)
+
+        content_layout.addLayout(topbar)
+
+        self.stack = QStackedWidget()
+        content_layout.addWidget(self.stack, 1)
+        main.addWidget(content, 1)
+
+        self._build_tasks_page()
+        self.dashboard = DashboardView()
+        self.stack.addWidget(self.dashboard)
+        self._build_agenda_page()
+
+    def _build_options_menu(self, parent):
+        menu = QMenu(parent)
+
+        data_menu = menu.addMenu("Data")
         export_action = QAction("Export JSON...", self)
         export_action.triggered.connect(self.export_data)
         import_action = QAction("Import JSON...", self)
@@ -150,7 +370,7 @@ class MainWindow(QMainWindow):
         data_menu.addAction(export_action)
         data_menu.addAction(import_action)
 
-        theme_menu = self.menuBar().addMenu("Theme")
+        theme_menu = menu.addMenu("Theme")
         for theme_name in THEMES:
             action = QAction(theme_name, self)
             action.setCheckable(True)
@@ -158,135 +378,78 @@ class MainWindow(QMainWindow):
             theme_menu.addAction(action)
             setattr(self, f"theme_action_{theme_name.lower()}", action)
         self._update_theme_actions()
+        return menu
 
-    def _build_ui(self):
-        root = QWidget()
-        self.setCentralWidget(root)
-        outer = QVBoxLayout(root)
+    def _build_tasks_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
 
-        header = QHBoxLayout()
-        title = QLabel("TaskFlow")
-        title.setObjectName("appTitle")
-        header.addWidget(title)
-        header.addStretch()
+        heading = QHBoxLayout()
+        self.tasks_title = QLabel("Tasks")
+        self.tasks_title.setObjectName("pageTitle")
+        heading.addWidget(self.tasks_title)
+        heading.addStretch()
 
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Search tasks, tags, categories...")
-        self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(self.search_changed)
-        header.addWidget(self.search, 1)
+        self.filter_button = QPushButton("Filters")
+        self.filter_button.setCheckable(True)
+        self.filter_button.clicked.connect(self._toggle_filters)
+        heading.addWidget(self.filter_button)
+        layout.addLayout(heading)
 
-        add = QPushButton("+ New task")
-        add.clicked.connect(self.new_task)
-        header.addWidget(add)
-        outer.addLayout(header)
+        self.filters = QWidget()
+        filter_layout = QHBoxLayout(self.filters)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.stack = QStackedWidget()
-        outer.addWidget(self.stack, 1)
+        self.status_filter = QComboBox()
+        self.status_filter.addItems(["All status", "Open", "Completed"])
+        self.priority_filter = QComboBox()
+        self.priority_filter.addItems(["All priorities", "High", "Medium", "Low"])
+        self.category_filter = QComboBox()
+        self.category_filter.addItems(["All categories"] + CATEGORIES)
+        self.recurrence_filter = QComboBox()
+        self.recurrence_filter.addItems(["All recurrence", "None", "Daily", "Weekly", "Monthly"])
 
-        tasks_page = QWidget()
-        layout = QVBoxLayout(tasks_page)
-        filter_row = QHBoxLayout()
-        self.status_filter = QComboBox(); self.status_filter.addItems(["All status", "Open", "Completed"])
-        self.priority_filter = QComboBox(); self.priority_filter.addItems(["All priorities", "High", "Medium", "Low"])
-        self.category_filter = QComboBox(); self.category_filter.addItems(["All categories"] + CATEGORIES)
-        self.recurrence_filter = QComboBox(); self.recurrence_filter.addItems(["All recurrence", "None", "Daily", "Weekly", "Monthly"])
-        for widget in (self.status_filter, self.priority_filter, self.category_filter, self.recurrence_filter):
-            widget.currentIndexChanged.connect(self.refresh_tasks); filter_row.addWidget(widget)
-        reset = QPushButton("Reset"); reset.clicked.connect(self.reset_filters); filter_row.addWidget(reset)
-        layout.addLayout(filter_row)
-        date_row = QHBoxLayout()
-        self.date_filter_toggle = QPushButton("Date range"); self.date_filter_toggle.setCheckable(True)
-        self.date_filter_toggle.toggled.connect(self.toggle_date_filters); date_row.addWidget(self.date_filter_toggle)
-        self.filter_from = QCalendarWidget(); self.filter_from.setMaximumHeight(170); self.filter_from.setVisible(False)
-        self.filter_to = QCalendarWidget(); self.filter_to.setMaximumHeight(170); self.filter_to.setVisible(False)
-        date_row.addWidget(self.filter_from); date_row.addWidget(self.filter_to); date_row.addStretch()
-        layout.addLayout(date_row)
-        layout.addWidget(QLabel("Filtered tasks"))
-        self.task_list = QListWidget()
-        self.task_list.itemDoubleClicked.connect(self.edit_item)
-        layout.addWidget(self.task_list)
+        for widget in (
+            self.status_filter, self.priority_filter,
+            self.category_filter, self.recurrence_filter
+        ):
+            widget.currentIndexChanged.connect(self.refresh_tasks)
+            filter_layout.addWidget(widget)
 
-        actions = QHBoxLayout()
-        done = QPushButton("✓ Toggle complete")
-        done.clicked.connect(self.toggle_selected)
-        actions.addWidget(done)
-        edit = QPushButton("Edit")
-        edit.clicked.connect(self.edit_selected)
-        actions.addWidget(edit)
-        delete = QPushButton("Delete")
-        delete.clicked.connect(self.delete_selected)
-        actions.addWidget(delete)
-        layout.addLayout(actions)
-        self.stack.addWidget(tasks_page)
+        reset = QPushButton("Reset")
+        reset.clicked.connect(self.reset_filters)
+        filter_layout.addWidget(reset)
+        filter_layout.addStretch()
+        self.filters.setVisible(False)
+        layout.addWidget(self.filters)
 
-        self.dashboard = DashboardView()
-        self.stack.addWidget(self.dashboard)
+        self.task_scroll = QScrollArea()
+        self.task_scroll.setWidgetResizable(True)
+        self.task_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.task_container = QWidget()
+        self.task_layout = QVBoxLayout(self.task_container)
+        self.task_layout.setContentsMargins(4, 4, 12, 8)
+        self.task_layout.setSpacing(18)
+        self.task_scroll.setWidget(self.task_container)
+        layout.addWidget(self.task_scroll, 1)
 
-        agenda_page = QWidget()
-        layout = QVBoxLayout(agenda_page)
-        layout.addWidget(QLabel("Daily agenda"))
-        self.agenda_date = QCalendarWidget()
-        self.agenda_date.setMaximumHeight(210)
-        self.agenda_date.selectionChanged.connect(self.refresh_agenda)
-        layout.addWidget(self.agenda_date)
-        self.agenda_list = QListWidget()
-        self.agenda_list.itemDoubleClicked.connect(self.edit_item)
-        layout.addWidget(self.agenda_list)
-        self.stack.addWidget(agenda_page)
+        self.stack.addWidget(page)
 
-        week_page = QWidget()
-        layout = QVBoxLayout(week_page)
-        week_header = QHBoxLayout()
-        self.week_title = QLabel()
-        week_header.addWidget(self.week_title)
-        week_header.addStretch()
-        layout.addLayout(week_header)
-
-        self.week_scroll = QScrollArea()
-        self.week_scroll.setWidgetResizable(True)
-        self.week_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.week_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.week_view = WeekView()
-        self.week_view.setMinimumWidth(900)
-        self.week_view.taskActivated.connect(self.edit_task_by_id)
-        self.week_view.taskMoved.connect(self.move_task_from_calendar)
-        self.week_view.taskResized.connect(self.resize_task_from_calendar)
-        self.week_scroll.setWidget(self.week_view)
-        layout.addWidget(self.week_scroll)
-        self.stack.addWidget(week_page)
-
-        calendar_page = QWidget()
-        layout = QVBoxLayout(calendar_page)
-        layout.addWidget(QLabel("Monthly calendar"))
-        self.calendar = QCalendarWidget()
-        self.calendar.selectionChanged.connect(self.refresh_calendar)
-        layout.addWidget(self.calendar)
-        self.calendar_tasks = QListWidget()
-        self.calendar_tasks.itemDoubleClicked.connect(self.edit_item)
-        layout.addWidget(self.calendar_tasks)
-        self.stack.addWidget(calendar_page)
-
-        nav = QHBoxLayout()
-        for label, index in [
-            ("📋 Tasks", 0),
-            ("📊 Dashboard", 1),
-            ("📅 Agenda", 2),
-            ("🗓 Week", 3),
-            ("📆 Calendar", 4),
-        ]:
-            button = QPushButton(label)
-            button.clicked.connect(lambda checked, i=index: self.show_page(i))
-            nav.addWidget(button)
-        outer.addLayout(nav)
+    def _build_agenda_page(self):
+        self.agenda = AgendaView()
+        self.agenda.taskActivated.connect(self.edit_task_by_id)
+        self.stack.addWidget(self.agenda)
 
     def _apply_theme(self, theme_name):
         self.setStyleSheet(stylesheet(theme_name))
 
     def _update_theme_actions(self):
         for theme_name in THEMES:
-            action = getattr(self, f"theme_action_{theme_name.lower()}")
-            action.setChecked(theme_name == self.current_theme)
+            action = getattr(self, f"theme_action_{theme_name.lower()}", None)
+            if action:
+                action.setChecked(theme_name == self.current_theme)
 
     def set_theme(self, theme_name):
         if theme_name not in THEMES:
@@ -298,135 +461,151 @@ class MainWindow(QMainWindow):
 
     def show_page(self, index):
         self.stack.setCurrentIndex(index)
-        if index == 1:
+        self.sidebar.set_active(index)
+        if index == 0:
+            self.refresh_tasks()
+        elif index == 1:
             self.refresh_dashboard()
         elif index == 2:
             self.refresh_agenda()
-        elif index == 3:
-            self.refresh_week()
-        elif index == 4:
-            self.refresh_calendar()
 
-    def make_item(self, task):
-        marker = "✓" if task["completed"] else "○"
-        if task["start_time"] and task["end_time"]:
-            time_text = f"  {task['start_time']}–{task['end_time']}"
-        else:
-            time_text = "  All day"
-        repeat = f" ↻{task['recurrence']}" if task["recurrence"] != "none" else ""
-        item = QListWidgetItem(
-            f"{marker}  {task['title']}{time_text}  [{task['category']}]{repeat}"
-        )
-        item.setData(Qt.ItemDataRole.UserRole, task["id"])
-        item.setToolTip(
-            f"Priority: {task['priority']}\\n"
-            f"Tags: {task['tags'] or '-'}\\n"
-            f"{task['description'] or ''}"
-        )
-        if task["completed"]:
-            item.setForeground(Qt.GlobalColor.gray)
-        return item
+    def _clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
 
-    def populate(self, list_widget, tasks):
-        list_widget.clear()
-        if not tasks:
-            list_widget.addItem("Nothing scheduled.")
-            return
-        for task in tasks:
-            list_widget.addItem(self.make_item(task))
+    def _day_title(self, value):
+        today = date.today()
+        if value == today:
+            return "Today"
+        if value == today + timedelta(days=1):
+            return "Tomorrow"
+        return value.strftime("%A, %d %B")
+
+    def _section(self, title, subtitle):
+        section = QWidget()
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(8)
+
+        title_row = QHBoxLayout()
+        label = QLabel(title)
+        label.setObjectName("dayTitle")
+        title_row.addWidget(label)
+        title_row.addStretch()
+        count = QLabel(subtitle)
+        count.setObjectName("dayCount")
+        title_row.addWidget(count)
+        section_layout.addLayout(title_row)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setObjectName("sectionLine")
+        section_layout.addWidget(line)
+        return section, section_layout
+
+    def _add_empty_state(self):
+        empty = QWidget()
+        box = QVBoxLayout(empty)
+        box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label = QLabel("No tasks here")
+        label.setObjectName("emptyTitle")
+        box.addWidget(label, 0, Qt.AlignmentFlag.AlignCenter)
+        hint = QLabel("Create a task with + New task.")
+        hint.setObjectName("emptyHint")
+        box.addWidget(hint, 0, Qt.AlignmentFlag.AlignCenter)
+        self.task_layout.addWidget(empty)
 
     def refresh(self):
         self.refresh_tasks()
         self.refresh_dashboard()
         self.refresh_agenda()
-        self.refresh_week()
-        self.refresh_calendar()
 
     def refresh_tasks(self):
-        status = {"All status": "all", "Open": "open", "Completed": "completed"}[self.status_filter.currentText()]
-        priority = {"All priorities": "all", "High": "high", "Medium": "medium", "Low": "low"}[self.priority_filter.currentText()]
+        status = {
+            "All status": "all", "Open": "open", "Completed": "completed"
+        }[self.status_filter.currentText()]
+        priority = {
+            "All priorities": "all", "High": "high", "Medium": "medium", "Low": "low"
+        }[self.priority_filter.currentText()]
         category = "all" if self.category_filter.currentIndex() == 0 else self.category_filter.currentText()
-        recurrence = {"All recurrence": "all", "None": "none", "Daily": "daily", "Weekly": "weekly", "Monthly": "monthly"}[self.recurrence_filter.currentText()]
-        date_from = self.filter_from.selectedDate().toString("yyyy-MM-dd") if self.date_filter_toggle.isChecked() else None
-        date_to = self.filter_to.selectedDate().toString("yyyy-MM-dd") if self.date_filter_toggle.isChecked() else None
-        if date_from and date_to and date_from > date_to:
-            date_from, date_to = date_to, date_from
-        tasks = self.database.filtered_tasks(self.search.text(), status, priority, category, recurrence, date_from, date_to)
-        self.populate(self.task_list, tasks)
+        recurrence = {
+            "All recurrence": "all", "None": "none", "Daily": "daily",
+            "Weekly": "weekly", "Monthly": "monthly"
+        }[self.recurrence_filter.currentText()]
 
-    def toggle_date_filters(self, checked):
-        self.filter_from.setVisible(checked)
-        self.filter_to.setVisible(checked)
-        self.refresh_tasks()
+        start = date.today()
+        end = start + timedelta(days=30)
+        tasks = self.database.filtered_tasks(
+            self.search.text(), status, priority, category, recurrence,
+            start.isoformat(), end.isoformat()
+        )
+
+        self._clear_layout(self.task_layout)
+        groups = {}
+        for task in tasks:
+            if task["due_date"]:
+                value = date.fromisoformat(task["due_date"])
+                groups.setdefault(value, []).append(task)
+
+        if not groups:
+            self._add_empty_state()
+            return
+
+        for day in sorted(groups):
+            section, section_layout = self._section(
+                self._day_title(day),
+                f"{len(groups[day])} task" + ("" if len(groups[day]) == 1 else "s"),
+            )
+            for task in groups[day]:
+                card = TaskCard(task)
+                card.editRequested.connect(self.edit_task_by_id)
+                card.completionChanged.connect(self.set_task_completed)
+                section_layout.addWidget(card)
+            self.task_layout.addWidget(section)
+
+        self.task_layout.addStretch()
+
+    def _toggle_filters(self, checked):
+        self.filters.setVisible(checked)
 
     def reset_filters(self):
-        for widget in (self.status_filter, self.priority_filter, self.category_filter, self.recurrence_filter):
+        for widget in (
+            self.status_filter, self.priority_filter,
+            self.category_filter, self.recurrence_filter
+        ):
             widget.setCurrentIndex(0)
-        self.date_filter_toggle.setChecked(False)
         self.search.clear()
         self.refresh_tasks()
 
     def refresh_dashboard(self):
-        date_from = self.filter_from.selectedDate().toString("yyyy-MM-dd") if self.date_filter_toggle.isChecked() else None
-        date_to = self.filter_to.selectedDate().toString("yyyy-MM-dd") if self.date_filter_toggle.isChecked() else None
-        if date_from and date_to and date_from > date_to:
-            date_from, date_to = date_to, date_from
-        row, categories = self.database.productivity_stats(date_from, date_to)
-        self.dashboard.update_stats(row, categories, date_from, date_to)
+        row, categories = self.database.productivity_stats()
+        self.dashboard.update_stats(row, categories)
 
     def refresh_agenda(self):
-        q = self.agenda_date.selectedDate()
-        self.populate(
-            self.agenda_list,
-            self.database.tasks_for_date(date(q.year(), q.month(), q.day())),
-        )
-
-    def refresh_week(self):
-        q = self.agenda_date.selectedDate()
-        selected = date(q.year(), q.month(), q.day())
-        start = selected - timedelta(days=selected.weekday())
-        end = start + timedelta(days=6)
-        self.week_title.setText(
-            f"Week of {start.strftime('%d %B %Y')}  •  Drag events to reschedule"
-        )
-        tasks = self.database.tasks_for_range(start, end)
-        self.week_view.set_week(start, tasks)
-
-    def refresh_calendar(self):
-        q = self.calendar.selectedDate()
-        self.populate(
-            self.calendar_tasks,
-            self.database.tasks_for_date(date(q.year(), q.month(), q.day())),
-        )
+        selected = self.agenda.selected_date
+        tasks = self.database.tasks_for_date(selected)
+        self.agenda.set_tasks(tasks)
 
     def search_changed(self):
-        self.refresh_tasks()
+        if self.stack.currentIndex() == 0:
+            self.refresh_tasks()
 
     def new_task(self):
         dialog = TaskDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.database.add_task(**dialog.values())
+            materialize_recurring_tasks(self.database)
             self.refresh()
 
-    def selected_id(self):
-        item = self.task_list.currentItem()
-        return item.data(Qt.ItemDataRole.UserRole) if item else None
-
-    def toggle_selected(self):
-        task_id = self.selected_id()
-        if task_id is not None:
-            task = self.database.get_task(task_id)
-            self.database.update_task(task_id, completed=not bool(task["completed"]))
-            self.refresh()
-
-    def edit_selected(self):
-        item = self.task_list.currentItem()
-        if item:
-            self.edit_item(item)
-
-    def edit_item(self, item):
-        task_id = item.data(Qt.ItemDataRole.UserRole)
-        self.edit_task_by_id(task_id)
+    def set_task_completed(self, task_id, completed):
+        task = self.database.get_task(task_id)
+        if not task:
+            return
+        self.database.update_task(task_id, completed=int(completed))
+        self.refresh()
 
     def edit_task_by_id(self, task_id):
         task = self.database.get_task(task_id)
@@ -435,32 +614,13 @@ class MainWindow(QMainWindow):
         dialog = TaskDialog(self, task)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.database.update_task(task["id"], **dialog.values())
+            materialize_recurring_tasks(self.database)
             self.refresh()
 
-    def move_task_from_calendar(self, task_id, new_date, start_time, end_time):
+    def delete_task_by_id(self, task_id):
         task = self.database.get_task(task_id)
         if not task:
             return
-        self.database.update_task(
-            task_id,
-            due_date=new_date,
-            start_time=start_time,
-            end_time=end_time,
-        )
-        self.refresh()
-
-    def resize_task_from_calendar(self, task_id, start_time, end_time):
-        task = self.database.get_task(task_id)
-        if not task:
-            return
-        self.database.update_task(task_id, start_time=start_time, end_time=end_time)
-        self.refresh()
-
-    def delete_selected(self):
-        task_id = self.selected_id()
-        if task_id is None:
-            return
-        task = self.database.get_task(task_id)
         if QMessageBox.question(
             self, "Delete task", f"Delete '{task['title']}'?"
         ) == QMessageBox.StandardButton.Yes:
@@ -478,14 +638,16 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self, "Import tasks", "", "JSON files (*.json)"
         )
-        if path:
-            try:
-                count = import_tasks(self.database, path)
-                self.refresh()
-                QMessageBox.information(self, "TaskFlow", f"Imported {count} tasks.")
-            except Exception as exc:
-                QMessageBox.critical(self, "Import failed", str(exc))
+        if not path:
+            return
+        try:
+            count = import_tasks(self.database, path)
+            materialize_recurring_tasks(self.database)
+            self.refresh()
+            QMessageBox.information(self, "TaskFlow", f"Imported {count} tasks.")
+        except Exception as exc:
+            QMessageBox.critical(self, "TaskFlow", f"Import failed: {exc}")
 
     def closeEvent(self, event):
         self.database.close()
-        event.accept()
+        super().closeEvent(event)
