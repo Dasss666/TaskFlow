@@ -1,7 +1,9 @@
 from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QDateTime, QPointF, QTimer, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QCursor, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QPainter, QPen
+from taskflow.ui.task_icons import smart_icon, icon_color
+
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -199,6 +201,23 @@ class AgendaTimeline(QWidget):
     def _category_color(self, task):
         return QColor(self.CATEGORY_COLORS.get(task["category"], "#9d7cff"))
 
+    def _paint_completion(self, painter, rect, task):
+        center = QPointF(rect.right() - 22, rect.top() + 22)
+        radius = 9
+        category = self._category_color(task)
+        completed = bool(task["completed"])
+        track = QColor(text_color := self.palette().windowText().color())
+        track.setAlpha(65)
+
+        painter.setBrush(QBrush(category if completed else QColor(0, 0, 0, 0)))
+        painter.setPen(QPen(category if completed else track, 1.6))
+        painter.drawEllipse(center, radius, radius)
+
+        if completed:
+            painter.setPen(QPen(Qt.GlobalColor.white, 1.8))
+            painter.drawLine(center.x() - 4, center.y(), center.x() - 1, center.y() + 3)
+            painter.drawLine(center.x() - 1, center.y() + 3, center.x() + 4, center.y() - 4)
+
     def _paint_tags(self, painter, rect, task, text_color):
         tags = [
             tag.strip()
@@ -329,6 +348,22 @@ class AgendaTimeline(QWidget):
             painter.setPen(QPen(border, 1.7))
             painter.drawRoundedRect(rect, 12, 12)
 
+            # Structured-inspired smart icon bubble.
+            icon_center = QPointF(rect.x() + 29, rect.y() + 29)
+            icon_radius = 17
+            icon_bg = QColor(category)
+            icon_bg.setAlpha(55 if not completed else 28)
+            painter.setBrush(QBrush(icon_bg))
+            painter.setPen(QPen(category, 1.2))
+            painter.drawEllipse(icon_center, icon_radius, icon_radius)
+            painter.setPen(QPen(category, 1))
+            icon_font = QFont("Segoe UI Emoji", 14)
+            painter.setFont(icon_font)
+            painter.drawText(
+                int(rect.x() + 12), int(rect.y() + 20),
+                34, 20, Qt.AlignmentFlag.AlignCenter, smart_icon(task)
+            )
+
             # Category accent stripe.
             painter.setBrush(QBrush(category))
             painter.setPen(Qt.PenStyle.NoPen)
@@ -346,21 +381,22 @@ class AgendaTimeline(QWidget):
             painter.setPen(QPen(muted, 1))
             start, end = self._effective_times(task)
             painter.drawText(
-                int(rect.x() + 14), int(rect.y() + 17),
+                int(rect.x() + 56), int(rect.y() + 17),
                 f"{start} – {end}"
             )
 
             painter.setPen(QPen(title_color, 1))
             painter.drawText(
-                int(rect.x() + 14),
+                int(rect.x() + 56),
                 int(rect.y() + 40),
-                int(rect.width() - 28),
+                int(rect.width() - 68),
                 max(20, int(rect.height() - 46)),
                 Qt.TextFlag.TextWordWrap,
                 task["title"],
             )
 
             self._paint_tags(painter, rect, task, title_color)
+            self._paint_completion(painter, rect, task)
 
         self._paint_current_time(painter)
 
