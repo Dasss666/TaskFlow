@@ -10,6 +10,10 @@ A Windows desktop task manager and personal agenda built with Python, PySide6 an
 - Responsive collapsible navigation: Tasks, Dashboard and Agenda
 - Tasks grouped by Today, Tomorrow and following dates
 - Interactive daily agenda with week date strip and time timeline
+- Floating + action for quick task creation on the selected agenda day
+- Animated circular completion controls, category colors and tag badges
+- Agenda current-time indicator, overlap-aware task layout, drag-to-move and edge-resize
+- Responsive sidebar and automatic compact layout on smaller windows
 - Advanced task filters (status, priority, category, recurrence and date range)
 - Search
 - Customizable themes: Midnight, Light, Cyberpunk and Ocean
