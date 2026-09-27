@@ -205,10 +205,8 @@ class TaskCard(QFrame):
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(12)
 
-        self.check = QCheckBox()
-        self.check.setChecked(bool(task["completed"]))
-        self.check.setToolTip("Mark as completed")
-        self.check.toggled.connect(
+        self.check = AnimatedCheck(bool(task["completed"]))
+        self.check.checkedChanged.connect(
             lambda checked: self.completionChanged.emit(self.task_id, checked)
         )
         root.addWidget(self.check, 0, Qt.AlignmentFlag.AlignTop)
@@ -226,17 +224,37 @@ class TaskCard(QFrame):
             meta.append(f"{task['start_time']} – {task['end_time']}")
         else:
             meta.append("All day")
-        meta.append(task["category"] or "Personal")
         if task["recurrence"] != "none":
             meta.append(f"↻ {task['recurrence']}")
         meta_label = QLabel("  •  ".join(meta))
         meta_label.setObjectName("taskCardMeta")
         body.addWidget(meta_label)
 
-        if task["tags"]:
-            tags = QLabel(" ".join(f"#{tag.strip()}" for tag in task["tags"].split(",") if tag.strip()))
-            tags.setObjectName("taskCardTags")
-            body.addWidget(tags)
+        category = task["category"] or "Personal"
+        category_colors = {
+            "Personal": "#ff8585",
+            "University": "#8f9cff",
+            "Work": "#f0b35b",
+            "Health": "#63d2b3",
+            "Projects": "#c48cff",
+        }
+        category_label = QLabel(f"●  {category}")
+        category_label.setObjectName("categoryBadge")
+        category_label.setStyleSheet(
+            f"color:{category_colors.get(category, '#9d7cff')}; font-weight:600;"
+        )
+        body.addWidget(category_label)
+
+        tags_row = QHBoxLayout()
+        tags_row.setSpacing(6)
+        tags = [tag.strip() for tag in (task["tags"] or "").split(",") if tag.strip()]
+        for tag in tags[:5]:
+            badge = QLabel(f"#{tag}")
+            badge.setObjectName("tagBadge")
+            tags_row.addWidget(badge)
+        if tags:
+            tags_row.addStretch()
+            body.addLayout(tags_row)
 
         root.addLayout(body, 1)
 
@@ -372,7 +390,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("TaskFlow")
         self.resize(1280, 820)
-        self.setMinimumSize(900, 620)
+        self.setMinimumSize(760, 520)
 
         self._build_ui()
         self._apply_theme(self.current_theme)
