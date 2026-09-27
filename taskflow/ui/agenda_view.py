@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 class AgendaTimeline(QWidget):
     taskActivated = Signal(int)
+    taskCompletionRequested = Signal(int, bool)
     taskMoved = Signal(int, str, str, str)
     taskResized = Signal(int, str, str)
 
@@ -48,6 +49,8 @@ class AgendaTimeline(QWidget):
         self._drag_original = None
         self._preview_times = {}
         self._overlap_columns = {}
+        self._hover_task_id = None
+        self._pressed_task_id = None
 
         self.setMouseTracking(True)
         self.setMinimumHeight(
@@ -178,7 +181,7 @@ class AgendaTimeline(QWidget):
                 + (start_m - self.START_HOUR * 60) * self.HOUR_HEIGHT / 60
             )
             height = max(
-                42,
+                34,
                 (end_m - start_m) * self.HOUR_HEIGHT / 60 - 8,
             )
 
@@ -201,47 +204,179 @@ class AgendaTimeline(QWidget):
     def _category_color(self, task):
         return QColor(self.CATEGORY_COLORS.get(task["category"], "#9d7cff"))
 
+    def _task_tags(self, task):
+        return [
+            tag.strip()
+            for tag in (task["tags"] or "").split(",")
+            if tag.strip()
+        ]
+
     def _paint_completion(self, painter, rect, task):
         center = QPointF(rect.right() - 22, rect.top() + 22)
         radius = 9
         category = self._category_color(task)
         completed = bool(task["completed"])
-        track = QColor(text_color := self.palette().windowText().color())
-        track.setAlpha(65)
-
+        track = QColor(self.palette().windowText().color())
+        track.setAlpha(70)
+        ring = category if completed else track
         painter.setBrush(QBrush(category if completed else QColor(0, 0, 0, 0)))
-        painter.setPen(QPen(category if completed else track, 1.6))
+        painter.setPen(QPen(ring, 1.8))
         painter.drawEllipse(center, radius, radius)
-
         if completed:
             painter.setPen(QPen(Qt.GlobalColor.white, 1.8))
             painter.drawLine(center.x() - 4, center.y(), center.x() - 1, center.y() + 3)
             painter.drawLine(center.x() - 1, center.y() + 3, center.x() + 4, center.y() - 4)
 
     def _paint_tags(self, painter, rect, task, text_color):
-        tags = [
-            tag.strip()
-            for tag in (task["tags"] or "").split(",")
-            if tag.strip()
-        ]
-        if not tags or rect.height() < 90:
+        tags = self._task_tags(task)
+        if not tags or rect.height() < 88:
             return
-
-        x = int(rect.x() + 14)
-        y = int(rect.bottom() - 25)
+        x = int(rect.x() + 56)
+        y = int(rect.bottom() - 24)
         for tag in tags[:3]:
-            width = min(100, 14 + len(tag) * 7)
-            badge = __import__("PySide6.QtCore", fromlist=["QRectF"]).QRectF(
-                x, y, width, 20
-            )
-            painter.setBrush(QBrush(QColor(text_color).darker(150)))
-            painter.setPen(Qt.PenStyle.NoPen)
+            width = min(108, 16 + len(tag) * 7)
+            badge = __import__("PySide6.QtCore", fromlist=["QRectF"]).QRectF(x, y, width, 19)
+            badge_fill = QColor(text_color)
+            badge_fill.setAlpha(22)
+            painter.setBrush(QBrush(badge_fill))
+            painter.setPen(QPen(QColor(text_color), 1))
             painter.drawRoundedRect(badge, 9, 9)
             painter.setPen(QPen(text_color, 1))
+            painter.setFont(QFont("Segoe UI", 9))
+            painter.drawText(int(badge.x() + 7), int(badge.y() + 13), tag[:14])
+            x += width + 5
+
+    def _paint_task_card(self, painter, rect, task, text, muted):
+        category = self._category_color(task)
+        completed = bool(task["completed"])
+        hovered = int(task["id"]) == self._hover_task_id
+        pressed = int(task["id"]) == self._pressed_task_id
+
+        fill = QColor(category)
+        fill.setAlpha(52 if hovered else 38)
+        if completed:
+            fill.setAlpha(25)
+        border = QColor(category)
+        border.setAlpha(210 if hovered else 135)
+        if completed:
+            border.setAlpha(95)
+
+        painter.setBrush(QBrush(fill))
+        painter.setPen(QPen(border, 1.8 if hovered else 1.4))
+        painter.drawRoundedRect(rect, 13, 13)
+
+        rail = __import__("PySide6.QtCore", fromlist=["QRectF"]).QRectF(
+            rect.x(), rect.y(), 5, rect.height()
+        )
+        painter.setBrush(QBrush(category))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(rail, 3, 3)
+
+        if pressed:
+            painter.setBrush(QBrush(QColor(255, 255, 255, 16)))
+            painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 11, 11)
+
+        compact = rect.height() < 62
+        icon_radius = 14 if compact else 20
+        icon_x = rect.x() + 26
+        icon_y = rect.top() + (rect.height() / 2 if compact else 30)
+        icon_center = QPointF(icon_x, icon_y)
+        icon_bg = QColor(category)
+        icon_bg.setAlpha(72 if not completed else 38)
+        painter.setBrush(QBrush(icon_bg))
+        painter.setPen(QPen(category, 1.2))
+        painter.drawEllipse(icon_center, icon_radius, icon_radius)
+        painter.setPen(QPen(category, 1))
+        painter.setFont(QFont("Segoe UI Emoji", 11 if compact else 17))
+        painter.drawText(
+            int(icon_x - icon_radius), int(icon_y - icon_radius),
+            int(icon_radius * 2), int(icon_radius * 2),
+            Qt.AlignmentFlag.AlignCenter, smart_icon(task)
+        )
+
+        left = int(rect.x() + (48 if compact else 58))
+        right = int(rect.right() - 42)
+        start_time, end_time = self._effective_times(task)
+
+        painter.setPen(QPen(muted, 1))
+        painter.setFont(QFont("Segoe UI", 9))
+        painter.drawText(
+            left, int(rect.top() + (16 if compact else 18)),
+            max(60, right - left), 18,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            f"{start_time} – {end_time}"
+        )
+
+        title_color = QColor(text)
+        if completed:
+            title_color.setAlpha(125)
+        painter.setPen(QPen(title_color, 1))
+        title_font = QFont("Segoe UI", 10 if compact else 11)
+        title_font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(title_font)
+        title_y = int(rect.top() + (31 if compact else 40))
+        title_h = max(16, int(rect.height() - (34 if compact else 56)))
+        painter.drawText(
+            left, title_y, max(70, right - left), title_h,
+            Qt.TextFlag.TextWordWrap, task["title"]
+        )
+
+        if not compact and rect.height() >= 68:
+            category_name = task["category"] or "Personal"
+            painter.setPen(QPen(category, 1))
+            painter.setFont(QFont("Segoe UI", 9))
             painter.drawText(
-                int(badge.x() + 8), int(badge.y() + 14), tag[:14]
+                left, int(rect.top() + 59), max(70, right - left), 17,
+                Qt.AlignmentFlag.AlignLeft, f"● {category_name}"
             )
-            x += width + 6
+
+        self._paint_tags(painter, rect, task, title_color)
+        self._paint_completion(painter, rect, task)
+
+    def _paint_all_day_card(self, painter, rect, task, text):
+        category = self._category_color(task)
+        completed = bool(task["completed"])
+        fill = QColor(category)
+        fill.setAlpha(32 if completed else 48)
+        border = QColor(category)
+        border.setAlpha(100 if completed else 175)
+        painter.setBrush(QBrush(fill))
+        painter.setPen(QPen(border, 1.4))
+        painter.drawRoundedRect(rect, 12, 12)
+
+        icon_center = QPointF(rect.x() + 28, rect.center().y())
+        painter.setBrush(QBrush(category))
+        painter.setPen(QPen(category, 1))
+        painter.drawEllipse(icon_center, 17, 17)
+        painter.setPen(QPen(Qt.GlobalColor.white, 1))
+        painter.setFont(QFont("Segoe UI Emoji", 13))
+        painter.drawText(
+            int(rect.x() + 11), int(rect.y() + 10), 34, 34,
+            Qt.AlignmentFlag.AlignCenter, smart_icon(task)
+        )
+
+        title_color = QColor(text)
+        if completed:
+            title_color.setAlpha(125)
+        painter.setPen(QPen(title_color, 1))
+        font = QFont("Segoe UI", 10)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.drawText(
+            int(rect.x() + 54), int(rect.y() + 8),
+            int(rect.width() - 110), 24,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            task["title"]
+        )
+        category_name = task["category"] or "Personal"
+        painter.setPen(QPen(category, 1))
+        painter.setFont(QFont("Segoe UI", 8))
+        painter.drawText(
+            int(rect.x() + 54), int(rect.y() + 31),
+            int(rect.width() - 110), 18,
+            Qt.AlignmentFlag.AlignLeft, f"● {category_name}"
+        )
+        self._paint_completion(painter, rect, task)
 
     def _paint_current_time(self, painter):
         if self.selected_date != date.today():
@@ -298,31 +433,7 @@ class AgendaTimeline(QWidget):
             )
             self._rects[task["id"]] = (task, rect)
 
-            category = self._category_color(task)
-            fill = QColor(category)
-            fill.setAlpha(45)
-
-            painter.setBrush(QBrush(fill))
-            painter.setPen(QPen(category, 1.5))
-            painter.drawRoundedRect(rect, 10, 10)
-
-            icon_center = QPointF(rect.x() + 28, rect.y() + 21)
-            icon_bg = QColor(category)
-            icon_bg.setAlpha(55)
-            painter.setBrush(QBrush(icon_bg))
-            painter.setPen(QPen(category, 1.0))
-            painter.drawEllipse(icon_center, 14, 14)
-            painter.setPen(QPen(category, 1))
-            painter.setFont(QFont("Segoe UI Emoji", 12))
-            painter.drawText(
-                int(rect.x() + 14), int(rect.y() + 12),
-                28, 18, Qt.AlignmentFlag.AlignCenter, smart_icon(task)
-            )
-            painter.setPen(QPen(text, 1))
-            painter.setFont(QFont())
-            painter.drawText(
-                int(rect.x() + 50), int(rect.y() + 27), task["title"]
-            )
+            self._paint_all_day_card(painter, rect, task, text)
             y += 48
 
         for hour in range(self.START_HOUR, self.END_HOUR + 1):
@@ -349,77 +460,19 @@ class AgendaTimeline(QWidget):
                 continue
 
             _, rect = self._rects[task["id"]]
-            category = self._category_color(task)
-            completed = bool(task["completed"])
-
-            fill = QColor(category)
-            fill.setAlpha(48 if not completed else 22)
-            border = QColor(category)
-            if completed:
-                border.setAlpha(100)
-
-            painter.setBrush(QBrush(fill))
-            painter.setPen(QPen(border, 1.7))
-            painter.drawRoundedRect(rect, 12, 12)
-
-            # Structured-inspired smart icon bubble.
-            icon_center = QPointF(rect.x() + 29, rect.y() + 29)
-            icon_radius = 17
-            icon_bg = QColor(category)
-            icon_bg.setAlpha(55 if not completed else 28)
-            painter.setBrush(QBrush(icon_bg))
-            painter.setPen(QPen(category, 1.2))
-            painter.drawEllipse(icon_center, icon_radius, icon_radius)
-            painter.setPen(QPen(category, 1))
-            icon_font = QFont("Segoe UI Emoji", 14)
-            painter.setFont(icon_font)
-            painter.drawText(
-                int(rect.x() + 12), int(rect.y() + 20),
-                34, 20, Qt.AlignmentFlag.AlignCenter, smart_icon(task)
-            )
-
-            # Category accent stripe.
-            painter.setBrush(QBrush(category))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(
-                __import__("PySide6.QtCore", fromlist=["QRectF"]).QRectF(
-                    rect.x(), rect.y(), 5, rect.height()
-                ),
-                3, 3
-            )
-
-            title_color = QColor(text)
-            if completed:
-                title_color.setAlpha(120)
-
-            painter.setPen(QPen(muted, 1))
-            start, end = self._effective_times(task)
-            painter.drawText(
-                int(rect.x() + 56), int(rect.y() + 17),
-                f"{start} – {end}"
-            )
-
-            painter.setPen(QPen(title_color, 1))
-            painter.drawText(
-                int(rect.x() + 56),
-                int(rect.y() + 40),
-                int(rect.width() - 68),
-                max(20, int(rect.height() - 46)),
-                Qt.TextFlag.TextWordWrap,
-                task["title"],
-            )
-
-            self._paint_tags(painter, rect, task, title_color)
-            self._paint_completion(painter, rect, task)
+            self._paint_task_card(painter, rect, task, text, muted)
 
         self._paint_current_time(painter)
 
     def _hit_test(self, pos):
-        # Later-added tasks are checked first, making the topmost card easier to grab.
         for task_id, (task, rect) in reversed(list(self._rects.items())):
             if rect.contains(pos):
                 return task, rect
         return None, None
+
+    def _completion_hit(self, pos, rect):
+        center = QPointF(rect.right() - 22, rect.top() + 22)
+        return (pos - center).manhattanLength() <= 15
 
     def _drag_mode_for(self, pos, rect):
         edge = 9
@@ -434,9 +487,22 @@ class AgendaTimeline(QWidget):
             return super().mousePressEvent(event)
 
         task, rect = self._hit_test(event.position())
-        if not task or not task["start_time"] or not task["end_time"]:
+        if not task:
             return super().mousePressEvent(event)
 
+        if self._completion_hit(event.position(), rect):
+            self._pressed_task_id = int(task["id"])
+            self.taskCompletionRequested.emit(
+                int(task["id"]), not bool(task["completed"])
+            )
+            self.update()
+            event.accept()
+            return
+
+        if not task["start_time"] or not task["end_time"]:
+            return super().mousePressEvent(event)
+
+        self._pressed_task_id = int(task["id"])
         self._drag_task_id = int(task["id"])
         self._drag_mode = self._drag_mode_for(event.position(), rect)
         self._drag_start_y = event.position().y()
@@ -452,6 +518,10 @@ class AgendaTimeline(QWidget):
     def mouseMoveEvent(self, event):
         if not self._drag_task_id:
             task, rect = self._hit_test(event.position())
+            new_hover = int(task["id"]) if task else None
+            if new_hover != self._hover_task_id:
+                self._hover_task_id = new_hover
+                self.update()
             if rect:
                 mode = self._drag_mode_for(event.position(), rect)
                 self.setCursor(
@@ -523,7 +593,11 @@ class AgendaTimeline(QWidget):
             self._drag_task_id = None
             self._drag_mode = None
             self._drag_original = None
+            self._pressed_task_id = None
             self._rebuild_rects()
+            self.update()
+        else:
+            self._pressed_task_id = None
             self.update()
 
         self.unsetCursor()
