@@ -315,7 +315,10 @@ class AgendaTimeline(QWidget):
         title_font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(title_font)
         title_y = int(rect.top() + (31 if compact else 40))
-        title_h = max(16, int(rect.height() - (34 if compact else 56)))
+        title_h = max(
+            16,
+            min(28 if not compact else 18, int(rect.height() - (34 if compact else 56))),
+        )
         painter.drawText(
             left, title_y, max(70, right - left), title_h,
             Qt.TextFlag.TextWordWrap, task["title"]
