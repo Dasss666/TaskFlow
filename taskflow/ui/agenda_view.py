@@ -110,41 +110,27 @@ class AgendaTimeline(QWidget):
 
         intervals.sort(key=lambda item: (item[1], item[2], item[0]["id"]))
         result = {}
-
-        # Build connected overlap groups so tasks that only overlap indirectly
-        # still share a consistent horizontal region.
         groups = []
+        current = []
+        current_end = None
+
+        # Intervals are sorted by start time, so a connected overlap cluster
+        # can be built by tracking the furthest ending task in the cluster.
         for item in intervals:
             _, start, end = item
-            group = None
-            for candidate in groups:
-                if any(other_start < end and other_end > start
-                       for _, other_start, other_end in candidate):
-                    group = candidate
-                    break
-            if group is None:
-                groups.append([item])
+            if not current or start < current_end:
+                current.append(item)
+                current_end = max(current_end or end, end)
             else:
-                group.append(item)
-                changed = True
-                while changed:
-                    changed = False
-                    for other in intervals:
-                        if other in group:
-                            continue
-                        _, other_start, other_end = other
-                        if any(
-                            group_start < other_end and group_end > other_start
-                            for _, group_start, group_end in group
-                        ):
-                            group.append(other)
-                            changed = True
+                groups.append(current)
+                current = [item]
+                current_end = end
+        if current:
+            groups.append(current)
 
         for group in groups:
             columns = []
-            for task, start, end in sorted(
-                group, key=lambda item: (item[1], item[2], item[0]["id"])
-            ):
+            for task, start, end in group:
                 column = 0
                 while column < len(columns) and columns[column] > start:
                     column += 1
