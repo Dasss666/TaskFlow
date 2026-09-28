@@ -1,8 +1,25 @@
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 
-from PySide6.QtCore import QDateTime, QPointF, QTimer, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QPainter, QPen
+from PySide6.QtCore import (
+    QEasingCurve,
+    QDateTime,
+    QPointF,
+    QParallelAnimationGroup,
+    QPropertyAnimation,
+    QTimer,
+    Qt,
+    Signal,
+)
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QCursor,
+    QFont,
+    QGraphicsOpacityEffect,
+    QPainter,
+    QPen,
+)
 from taskflow.ui.task_icons import smart_icon, icon_color
 
 from PySide6.QtWidgets import (
@@ -197,6 +214,19 @@ class AgendaTimeline(QWidget):
                     x, y + 4, column_width, height
                 ),
             )
+
+    def wheelEvent(self, event):
+        delta_x = event.angleDelta().x()
+        delta_y = event.angleDelta().y()
+
+        if delta_x or event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            delta = delta_x if delta_x else delta_y
+            if abs(delta) >= 30:
+                self._shift_week(-1 if delta > 0 else 1)
+                event.accept()
+                return
+
+        super().wheelEvent(event)
 
     def resizeEvent(self, event):
         self._rebuild_rects()
@@ -630,6 +660,8 @@ class AgendaView(QWidget):
         super().__init__(parent)
         self.selected_date = date.today()
         self._tasks = []
+        self._transitioning = False
+        self._transition_duration = 240
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -673,17 +705,27 @@ class AgendaView(QWidget):
 
         # Seven-day strip. The selected day stays visually anchored while
         # the left/right controls move by a complete week.
-        self.day_strip = QHBoxLayout()
+        self.day_strip_container = QWidget()
+        self.day_strip = QHBoxLayout(self.day_strip_container)
+        self.day_strip.setContentsMargins(0, 0, 0, 0)
         self.day_strip.setSpacing(8)
-        root.addLayout(self.day_strip)
+        root.addWidget(self.day_strip_container)
 
-        self.scroll = QScrollArea()
+        self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.timeline = AgendaTimeline()
         self.timeline.taskActivated.connect(self.taskActivated)
         self.scroll.setWidget(self.timeline)
         root.addWidget(self.scroll, 1)
+
+        self._timeline_effect = QGraphicsOpacityEffect(self.timeline)
+        self._timeline_effect.setOpacity(1.0)
+        self.timeline.setGraphicsEffect(self._timeline_effect)
+
+        self._strip_effect = QGraphicsOpacityEffect(self.day_strip_container)
+        self._strip_effect.setOpacity(1.0)
+        self.day_strip_container.setGraphicsEffect(self._strip_effect)
 
         self.add_button = QPushButton("+", self)
         self.add_button.setObjectName("floatingAddButton")
@@ -705,29 +747,143 @@ class AgendaView(QWidget):
             self.height() - self.add_button.height() - margin,
         )
 
-    def set_date(self, value: date):
+    def set_date(self, value: date, animated=True, scroll_to_time=False):
+        value = value if isinstance(value, date) else date.today()
+
         if self.selected_date == value:
             self._update_header()
             self._rebuild_day_strip()
             self.timeline.set_date(value)
+            if scroll_to_time or value == date.today():
+                QTimer.singleShot(80, lambda: self.scroll_to_current_time(animated=True))
             return
 
+        old_date = self.selected_date
         self.selected_date = value
+
+        if animated:
+            self._animate_date_change(old_date, value)
+        else:
+            self._apply_date_change()
+
+        self.dateChanged.emit(value)
+
+        if scroll_to_time or value == date.today():
+            QTimer.singleShot(
+                self._transition_duration + 30,
+                lambda: self.scroll_to_current_time(animated=True),
+            )
+
+    def _apply_date_change(self):
         self._update_header()
         self._rebuild_day_strip()
-        self.timeline.set_date(value)
-        self.dateChanged.emit(value)
+        self.timeline.set_date(self.selected_date)
 
     def set_tasks(self, tasks):
         self._tasks = list(tasks)
         self.timeline.set_tasks(self._tasks)
         self._rebuild_day_strip()
 
+    def _animate_date_change(self, old_date, new_date):
+        if self._transitioning:
+            self._apply_date_change()
+            return
+
+        self._transitioning = True
+
+        timeline_anim = QPropertyAnimation(self._timeline_effect, b"opacity", self)
+        timeline_anim.setDuration(self._transition_duration)
+        timeline_anim.setStartValue(1.0)
+        timeline_anim.setKeyValueAt(0.42, 0.0)
+        timeline_anim.setEndValue(1.0)
+        timeline_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        strip_anim = QPropertyAnimation(self._strip_effect, b"opacity", self)
+        strip_anim.setDuration(self._transition_duration)
+        strip_anim.setStartValue(1.0)
+        strip_anim.setKeyValueAt(0.42, 0.15)
+        strip_anim.setEndValue(1.0)
+        strip_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        group = QParallelAnimationGroup(self)
+        group.addAnimation(timeline_anim)
+        group.addAnimation(strip_anim)
+
+        def halfway():
+            self._apply_date_change()
+
+        def finished():
+            self._transitioning = False
+            self._timeline_effect.setOpacity(1.0)
+            self._strip_effect.setOpacity(1.0)
+
+        QTimer.singleShot(self._transition_duration // 2, halfway)
+        group.finished.connect(finished)
+
+        self._date_animation = group
+        group.start()
+
     def _shift_week(self, weeks):
-        self.set_date(self.selected_date + timedelta(days=7 * weeks))
+        self.set_date(
+            self.selected_date + timedelta(days=7 * weeks),
+            animated=True,
+        )
 
     def _go_today(self):
-        self.set_date(date.today())
+        self.set_date(
+            date.today(),
+            animated=True,
+            scroll_to_time=True,
+        )
+
+    def scroll_to_current_time(self, animated=True):
+        if self.selected_date != date.today():
+            return
+
+        now = datetime.now()
+        minutes = now.hour * 60 + now.minute + now.second / 60
+        start = self.timeline.START_HOUR * 60
+        end = self.timeline.END_HOUR * 60
+
+        if minutes <= start:
+            target = 0
+        elif minutes >= end:
+            target = max(0, self.timeline._all_day_height)
+        else:
+            y = self.timeline._all_day_height + (
+                minutes - start
+            ) * self.timeline.HOUR_HEIGHT / 60
+            target = y - self.scroll.viewport().height() * 0.34
+
+        bar = self.scroll.verticalScrollBar()
+        target = max(bar.minimum(), min(int(target), bar.maximum()))
+
+        if not animated:
+            bar.setValue(target)
+            return
+
+        animation = QPropertyAnimation(bar, b"value", self)
+        animation.setDuration(420)
+        animation.setStartValue(bar.value())
+        animation.setEndValue(target)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._scroll_animation = animation
+        animation.start()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Left:
+            self._shift_week(-1)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Right:
+            self._shift_week(1)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Home:
+            self._go_today()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _update_header(self):
         selected = self.selected_date
