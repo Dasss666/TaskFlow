@@ -265,4 +265,17 @@ def stylesheet(theme_name: str) -> str:
             padding: 7px;
         }
     """
-    return base + agenda_header
+    ai_button = """
+        #aiButton {
+            min-width: 44px;
+            max-width: 44px;
+            min-height: 40px;
+            max-height: 40px;
+            padding: 6px;
+            border-radius: 20px;
+            font-size: 20px;
+            border: 1px solid #6d4aff;
+        }
+        #aiButton:hover { background: rgba(109,74,255,0.18); }
+    """
+    return base + agenda_header + ai_button
