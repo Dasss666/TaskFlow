@@ -16,8 +16,11 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Validate Python sources
+        run: python -m compileall -q taskflow
+
       - name: Build executable
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name TaskFlow taskflow/__main__.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name TaskFlow --collect-all keyring taskflow/__main__.py
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
