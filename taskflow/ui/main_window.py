@@ -18,6 +18,7 @@ from taskflow.ui.agenda_view import AgendaView
 from taskflow.ui.dashboard import DashboardView
 from taskflow.ui.themes import load_theme, save_theme, stylesheet, THEMES
 from taskflow.ui.task_icons import SmartTaskIcon, icon_color
+from taskflow.ui.ai_assistant import AIAssistantDialog
 
 CATEGORIES = ["Personal", "University", "Work", "Health", "Projects"]
 PRIORITIES = ["low", "medium", "high"]
@@ -493,6 +494,13 @@ class MainWindow(QMainWindow):
         add.clicked.connect(self.new_task)
         topbar.addWidget(add)
 
+        self.ai_button = QToolButton()
+        self.ai_button.setText("🎙")
+        self.ai_button.setObjectName("aiButton")
+        self.ai_button.setToolTip("Open TaskFlow AI Assistant")
+        self.ai_button.clicked.connect(self.open_ai_assistant)
+        topbar.addWidget(self.ai_button)
+
         options = QToolButton()
         options.setText("⚙")
         options.setObjectName("iconButton")
@@ -512,6 +520,10 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.dashboard)
         self._build_agenda_page()
         self._build_manage_page()
+
+    def open_ai_assistant(self):
+        dialog = AIAssistantDialog(self, self)
+        dialog.exec()
 
     def _build_options_menu(self, parent):
         menu = QMenu(parent)
