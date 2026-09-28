@@ -2,6 +2,14 @@ from pathlib import Path
 import sqlite3
 from datetime import date
 
+DEFAULT_CATEGORY_SETTINGS = {
+    "Personal": ("#ff8585", "✓"),
+    "University": ("#8f9cff", "📚"),
+    "Work": ("#f0b35b", "💼"),
+    "Health": ("#63d2b3", "♥"),
+    "Projects": ("#c48cff", "◇"),
+}
+
 APP_DIR = Path.home() / "AppData" / "Local" / "TaskFlow"
 DB_PATH = APP_DIR / "taskflow.db"
 
@@ -39,6 +47,8 @@ class Database:
             CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
+                color TEXT NOT NULL DEFAULT '#9d7cff',
+                icon TEXT NOT NULL DEFAULT '✓',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -57,6 +67,8 @@ class Database:
                 FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE CASCADE
             );
         """)
+        self._add_column_if_missing("categories", "color", "TEXT NOT NULL DEFAULT '#9d7cff'")
+        self._add_column_if_missing("categories", "icon", "TEXT NOT NULL DEFAULT '✓'")
         self._add_column_if_missing("tasks", "start_time", "TEXT")
         self._add_column_if_missing("tasks", "end_time", "TEXT")
         self._add_column_if_missing("tasks", "category", "TEXT NOT NULL DEFAULT 'Personal'")
@@ -70,9 +82,14 @@ class Database:
         assert self.connection is not None
         defaults = ["Personal", "University", "Work", "Health", "Projects"]
         self.connection.executemany(
-            "INSERT OR IGNORE INTO categories(name) VALUES (?)",
-            [(name,) for name in defaults],
+            "INSERT OR IGNORE INTO categories(name, color, icon) VALUES (?, ?, ?)",
+            [(name, *DEFAULT_CATEGORY_SETTINGS[name]) for name in defaults],
         )
+        for name, (color, icon) in DEFAULT_CATEGORY_SETTINGS.items():
+            self.connection.execute(
+                "UPDATE categories SET color=?, icon=? WHERE name=? AND color='#9d7cff' AND icon='✓'",
+                (color, icon, name),
+            )
 
     def list_categories(self):
         assert self.connection is not None
@@ -86,6 +103,31 @@ class Database:
         cur = self.connection.execute("INSERT INTO categories(name) VALUES (?)", (name,))
         self.connection.commit()
         return int(cur.lastrowid)
+
+    def get_category(self, category_id: int):
+        assert self.connection is not None
+        return self.connection.execute(
+            "SELECT * FROM categories WHERE id=?", (category_id,)
+        ).fetchone()
+
+    def category_style(self, name: str):
+        assert self.connection is not None
+        row = self.connection.execute(
+            "SELECT color, icon FROM categories WHERE name=?", (name,)
+        ).fetchone()
+        if row:
+            return {"color": row["color"], "icon": row["icon"]}
+        color, icon = DEFAULT_CATEGORY_SETTINGS.get(name, ("#9d7cff", "✓"))
+        return {"color": color, "icon": icon}
+
+    def update_category_style(self, category_id: int, color: str, icon: str) -> None:
+        assert self.connection is not None
+        icon = (icon or "✓").strip()[:8]
+        self.connection.execute(
+            "UPDATE categories SET color=?, icon=? WHERE id=?",
+            (color, icon, category_id),
+        )
+        self.connection.commit()
 
     def update_category(self, category_id: int, name: str) -> None:
         assert self.connection is not None
