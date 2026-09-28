@@ -26,6 +26,12 @@ class _AgentJob(QRunnable):
             self.signals.finished.emit(result)
         except Exception as exc:
             self.signals.failed.emit(str(exc))
+        finally:
+            if self.audio_path:
+                try:
+                    Path(self.audio_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 class AIAssistantDialog(QDialog):
     def __init__(self, main_window, parent=None):
