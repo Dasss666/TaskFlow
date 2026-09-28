@@ -16,6 +16,8 @@ A Windows desktop task manager and personal agenda built with Python, PySide6 an
 - Structured-style agenda cards with proportional duration, category rail, icon, metadata, tags and completion control
 - Agenda header with month selector, week navigation, selected-day highlight and today indicator
 - Smooth agenda transitions, week navigation gestures and animated auto-scroll to the current time
+- Manage section for categories and tags with CRUD operations
+- Category-dependent predefined task titles with CRUD management and task-dialog selection
 - Agenda current-time indicator, overlap-aware task layout, drag-to-move and edge-resize
 - Responsive sidebar and automatic compact layout on smaller windows
 - Advanced task filters (status, priority, category, recurrence and date range)
