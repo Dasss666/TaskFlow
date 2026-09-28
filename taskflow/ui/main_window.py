@@ -5,7 +5,8 @@ from PySide6.QtGui import QAction, QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QCalendarWidget, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
-    QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QStackedWidget,
+    QListWidget, QListWidgetItem, QInputDialog, QCompleter, QMenu, QMessageBox, QPlainTextEdit,
+    QPushButton, QScrollArea, QStackedWidget,
     QTimeEdit, QToolButton, QVBoxLayout, QWidget
 )
 
@@ -24,13 +25,17 @@ RECURRENCES = ["none", "daily", "weekly", "monthly"]
 
 
 class TaskDialog(QDialog):
-    def __init__(self, parent=None, task=None):
+    def __init__(self, parent=None, task=None, database=None):
         super().__init__(parent)
         self.setWindowTitle("Edit task" if task else "New task")
-        self.setMinimumWidth(470)
+        self.setMinimumWidth(500)
+        self.database = database
 
         form = QFormLayout(self)
         self.title = QLineEdit()
+        self.title_preset = QComboBox()
+        self.title_preset.setPlaceholderText("Choose a predefined title...")
+        self.title_preset.currentIndexChanged.connect(self._apply_title_preset)
         self.description = QPlainTextEdit()
         self.description.setFixedHeight(80)
         self.date = QCalendarWidget()
@@ -55,6 +60,7 @@ class TaskDialog(QDialog):
         self.recurrence.addItems(RECURRENCES)
 
         form.addRow("Title *", self.title)
+        form.addRow("Preset title", self.title_preset)
         form.addRow("Description", self.description)
         form.addRow("Date", self.date)
         form.addRow("Schedule", self.all_day)
@@ -78,6 +84,9 @@ class TaskDialog(QDialog):
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
 
+        self._load_managed_values()
+        self.category.currentTextChanged.connect(self._refresh_title_presets)
+
         if task:
             self.title.setText(task["title"])
             self.description.setPlainText(task["description"] or "")
@@ -98,6 +107,41 @@ class TaskDialog(QDialog):
             self.recurrence.setCurrentText(task["recurrence"] or "none")
         else:
             self._toggle_time_fields(False)
+
+        self._refresh_title_presets(self.category.currentText())
+
+    def _load_managed_values(self):
+        if not self.database:
+            return
+        self.category.clear()
+        self.category.addItems([row["name"] for row in self.database.list_categories()])
+        tags = [row["name"] for row in self.database.list_tags()]
+        if tags:
+            completer = QCompleter(tags, self.tags)
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            self.tags.setCompleter(completer)
+
+    def _refresh_title_presets(self, category_name):
+        self.title_preset.blockSignals(True)
+        self.title_preset.clear()
+        if self.database:
+            category_id = next(
+                (row["id"] for row in self.database.list_categories()
+                 if row["name"] == category_name),
+                None,
+            )
+            if category_id is not None:
+                self.title_preset.addItem("Choose a predefined title...", None)
+                for row in self.database.list_title_presets(category_id):
+                    self.title_preset.addItem(row["title"], row["title"])
+        self.title_preset.blockSignals(False)
+
+    def _apply_title_preset(self, index):
+        value = self.title_preset.itemData(index)
+        if value:
+            self.title.setText(value)
+            self.title.setFocus()
+            self.title.selectAll()
 
     def _toggle_time_fields(self, checked):
         self.start.setEnabled(not checked)
@@ -332,6 +376,7 @@ class Sidebar(QWidget):
             ("Tasks", "✓", 0),
             ("Dashboard", "▦", 1),
             ("Agenda", "◷", 2),
+            ("Manage", "⚙", 3),
         ]:
             button = QPushButton(f"{icon}   {label}")
             button.setCheckable(True)
@@ -386,7 +431,7 @@ class Sidebar(QWidget):
 
         for button, (label, icon, _) in zip(
             self.buttons,
-            [("Tasks", "✓", 0), ("Dashboard", "▦", 1), ("Agenda", "◷", 2)],
+            [("Tasks", "✓", 0), ("Dashboard", "▦", 1), ("Agenda", "◷", 2), ("Manage", "⚙", 3)],
         ):
             button.setText(f"{icon}   {label}" if self.expanded else icon)
 
@@ -467,6 +512,7 @@ class MainWindow(QMainWindow):
         self.dashboard = DashboardView()
         self.stack.addWidget(self.dashboard)
         self._build_agenda_page()
+        self._build_manage_page()
 
     def _build_options_menu(self, parent):
         menu = QMenu(parent)
@@ -516,7 +562,7 @@ class MainWindow(QMainWindow):
         self.priority_filter = QComboBox()
         self.priority_filter.addItems(["All priorities", "High", "Medium", "Low"])
         self.category_filter = QComboBox()
-        self.category_filter.addItems(["All categories"] + CATEGORIES)
+        self.category_filter.addItems(["All categories"] + self.category_names())
         self.recurrence_filter = QComboBox()
         self.recurrence_filter.addItems(["All recurrence", "None", "Daily", "Weekly", "Monthly"])
         self.date_filter = QCheckBox("Date range")
@@ -571,6 +617,202 @@ class MainWindow(QMainWindow):
         self.agenda.timeline.taskResized.connect(self.resize_agenda_task)
         self.stack.addWidget(self.agenda)
 
+    def category_names(self):
+        return [row["name"] for row in self.database.list_categories()]
+
+    def _build_manage_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        title = QLabel("Manage")
+        title.setObjectName("pageTitle")
+        layout.addWidget(title)
+        subtitle = QLabel("Categories, tags and predefined task titles")
+        subtitle.setObjectName("appSubtitle")
+        layout.addWidget(subtitle)
+
+        tabs = QTabWidget()
+        layout.addWidget(tabs, 1)
+
+        self.category_list = QListWidget()
+        tabs.addTab(self._manager_tab(self.category_list, self._add_category, self._edit_category, self._delete_category), "Categories")
+
+        self.tag_list = QListWidget()
+        tabs.addTab(self._manager_tab(self.tag_list, self._add_tag, self._edit_tag, self._delete_tag), "Tags")
+
+        preset_page = QWidget()
+        preset_layout = QVBoxLayout(preset_page)
+        self.preset_category = QComboBox()
+        self.preset_category.currentIndexChanged.connect(self.refresh_title_presets)
+        self.preset_list = QListWidget()
+        preset_layout.addWidget(QLabel("Predefined titles depend on the selected category."))
+        preset_layout.addWidget(self.preset_category)
+        preset_layout.addWidget(self.preset_list, 1)
+        row = QHBoxLayout()
+        for label, slot in (("+ Add title", self._add_title_preset), ("Edit", self._edit_title_preset), ("Delete", self._delete_title_preset)):
+            button = QPushButton(label)
+            button.clicked.connect(slot)
+            row.addWidget(button)
+        preset_layout.addLayout(row)
+        tabs.addTab(preset_page, "Title presets")
+
+    def _manager_tab(self, widget, add_slot, edit_slot, delete_slot):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(widget, 1)
+        row = QHBoxLayout()
+        for label, slot in (("+ Add", add_slot), ("Edit", edit_slot), ("Delete", delete_slot)):
+            button = QPushButton(label)
+            button.clicked.connect(slot)
+            row.addWidget(button)
+        layout.addLayout(row)
+        return page
+
+    def refresh_manage(self):
+        self.category_list.clear()
+        for row in self.database.list_categories():
+            item = QListWidgetItem(row["name"])
+            item.setData(Qt.ItemDataRole.UserRole, row["id"])
+            self.category_list.addItem(item)
+
+        self.tag_list.clear()
+        for row in self.database.list_tags():
+            item = QListWidgetItem("#" + row["name"])
+            item.setData(Qt.ItemDataRole.UserRole, row["id"])
+            self.tag_list.addItem(item)
+
+        current = self.preset_category.currentData() if self.preset_category.count() else None
+        self.preset_category.blockSignals(True)
+        self.preset_category.clear()
+        for row in self.database.list_categories():
+            self.preset_category.addItem(row["name"], row["id"])
+        if current is not None:
+            idx = self.preset_category.findData(current)
+            if idx >= 0:
+                self.preset_category.setCurrentIndex(idx)
+        self.preset_category.blockSignals(False)
+        self.refresh_title_presets()
+
+        current_category = self.category_filter.currentText()
+        self.category_filter.blockSignals(True)
+        self.category_filter.clear()
+        self.category_filter.addItem("All categories")
+        self.category_filter.addItems(self.category_names())
+        self.category_filter.setCurrentText(current_category if current_category else "All categories")
+        self.category_filter.blockSignals(False)
+
+    def _prompt_name(self, title, label, value=""):
+        text, ok = QInputDialog.getText(self, title, label, text=value)
+        return text.strip(), ok
+
+    def _add_category(self):
+        name, ok = self._prompt_name("New category", "Category name:")
+        if ok and name:
+            try:
+                self.database.add_category(name)
+            except Exception as exc:
+                QMessageBox.warning(self, "TaskFlow", f"Cannot create category: {exc}")
+            self.refresh_manage()
+
+    def _edit_category(self):
+        item = self.category_list.currentItem()
+        if not item:
+            return
+        name, ok = self._prompt_name("Edit category", "Category name:", item.text())
+        if ok and name:
+            try:
+                self.database.update_category(item.data(Qt.ItemDataRole.UserRole), name)
+            except Exception as exc:
+                QMessageBox.warning(self, "TaskFlow", f"Cannot update category: {exc}")
+            self.refresh_manage()
+            self.refresh_tasks()
+
+    def _delete_category(self):
+        item = self.category_list.currentItem()
+        if not item:
+            return
+        if item.text() == "Personal":
+            QMessageBox.information(self, "TaskFlow", "Personal is the fallback category and cannot be deleted.")
+            return
+        if QMessageBox.question(self, "Delete category", f"Delete '{item.text()}'? Existing tasks will move to Personal.") == QMessageBox.StandardButton.Yes:
+            self.database.delete_category(item.data(Qt.ItemDataRole.UserRole))
+            self.refresh_manage()
+            self.refresh_tasks()
+
+    def _add_tag(self):
+        name, ok = self._prompt_name("New tag", "Tag name:")
+        if ok and name:
+            try:
+                self.database.add_tag(name)
+            except Exception as exc:
+                QMessageBox.warning(self, "TaskFlow", f"Cannot create tag: {exc}")
+            self.refresh_manage()
+
+    def _edit_tag(self):
+        item = self.tag_list.currentItem()
+        if not item:
+            return
+        name, ok = self._prompt_name("Edit tag", "Tag name:", item.text().lstrip("#"))
+        if ok and name:
+            try:
+                self.database.update_tag(item.data(Qt.ItemDataRole.UserRole), name)
+            except Exception as exc:
+                QMessageBox.warning(self, "TaskFlow", f"Cannot update tag: {exc}")
+            self.refresh_manage()
+            self.refresh_tasks()
+
+    def _delete_tag(self):
+        item = self.tag_list.currentItem()
+        if not item:
+            return
+        if QMessageBox.question(self, "Delete tag", f"Delete {item.text()} from the tag library and existing tasks?") == QMessageBox.StandardButton.Yes:
+            self.database.delete_tag(item.data(Qt.ItemDataRole.UserRole))
+            self.refresh_manage()
+            self.refresh_tasks()
+
+    def refresh_title_presets(self):
+        self.preset_list.clear()
+        category_id = self.preset_category.currentData()
+        if category_id is None:
+            return
+        for row in self.database.list_title_presets(category_id):
+            item = QListWidgetItem(row["title"])
+            item.setData(Qt.ItemDataRole.UserRole, row["id"])
+            self.preset_list.addItem(item)
+
+    def _add_title_preset(self):
+        category_id = self.preset_category.currentData()
+        if category_id is None:
+            return
+        title, ok = self._prompt_name("New predefined title", "Title:")
+        if ok and title:
+            try:
+                self.database.add_title_preset(category_id, title)
+            except Exception as exc:
+                QMessageBox.warning(self, "TaskFlow", f"Cannot create title preset: {exc}")
+            self.refresh_title_presets()
+
+    def _edit_title_preset(self):
+        item = self.preset_list.currentItem()
+        category_id = self.preset_category.currentData()
+        if not item or category_id is None:
+            return
+        title, ok = self._prompt_name("Edit predefined title", "Title:", item.text())
+        if ok and title:
+            try:
+                self.database.update_title_preset(item.data(Qt.ItemDataRole.UserRole), category_id, title)
+            except Exception as exc:
+                QMessageBox.warning(self, "TaskFlow", f"Cannot update title preset: {exc}")
+            self.refresh_title_presets()
+
+    def _delete_title_preset(self):
+        item = self.preset_list.currentItem()
+        if not item:
+            return
+        if QMessageBox.question(self, "Delete predefined title", f"Delete '{item.text()}'?") == QMessageBox.StandardButton.Yes:
+            self.database.delete_title_preset(item.data(Qt.ItemDataRole.UserRole))
+            self.refresh_title_presets()
+
     def _apply_theme(self, theme_name):
         self.setStyleSheet(stylesheet(theme_name))
 
@@ -603,6 +845,8 @@ class MainWindow(QMainWindow):
             self.refresh_dashboard()
         elif index == 2:
             self.refresh_agenda()
+        elif index == 3:
+            self.refresh_manage()
 
     def _clear_layout(self, layout):
         while layout.count():
@@ -738,7 +982,7 @@ class MainWindow(QMainWindow):
             self.refresh_tasks()
 
     def new_task(self, preferred_date=None):
-        dialog = TaskDialog(self)
+        dialog = TaskDialog(self, database=self.database)
         if preferred_date is not None:
             dialog.date.setSelectedDate(
                 QDate(preferred_date.year, preferred_date.month, preferred_date.day)
@@ -782,7 +1026,7 @@ class MainWindow(QMainWindow):
         task = self.database.get_task(task_id)
         if not task:
             return
-        dialog = TaskDialog(self, task)
+        dialog = TaskDialog(self, task, self.database)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.database.update_task(task["id"], **dialog.values())
             materialize_recurring_tasks(self.database)
