@@ -16,13 +16,13 @@ from PySide6.QtGui import (
     QColor,
     QCursor,
     QFont,
-    QGraphicsOpacityEffect,
     QPainter,
     QPen,
 )
 from taskflow.ui.task_icons import smart_icon, icon_color
 
 from PySide6.QtWidgets import (
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -786,8 +786,11 @@ class AgendaView(QWidget):
 
     def _animate_date_change(self, old_date, new_date):
         if self._transitioning:
-            self._apply_date_change()
-            return
+            if hasattr(self, "_date_animation"):
+                self._date_animation.stop()
+            self._transitioning = False
+            self._timeline_effect.setOpacity(1.0)
+            self._strip_effect.setOpacity(1.0)
 
         self._transitioning = True
 
