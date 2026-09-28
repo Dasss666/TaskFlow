@@ -45,6 +45,9 @@ def _value(task, key, default=""):
 
 def smart_icon(task) -> str:
     """Pick a lightweight icon from task title/category/tags/description."""
+    custom_icon = str(_value(task, "category_icon") or "").strip()
+    if custom_icon:
+        return custom_icon
     title = str(_value(task, "title") or "").lower()
     category = str(_value(task, "category") or "").lower()
     tags = str(_value(task, "tags") or "").lower()
@@ -67,6 +70,9 @@ def smart_icon(task) -> str:
 
 
 def icon_color(task) -> QColor:
+    custom_color = str(_value(task, "category_color") or "").strip()
+    if custom_color:
+        return QColor(custom_color)
     category = str(_value(task, "category") or "Personal")
     return QColor(CATEGORY_COLORS.get(category, "#9d7cff"))
 

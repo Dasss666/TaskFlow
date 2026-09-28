@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from PySide6.QtCore import QDate, QTime, Qt, QSettings, QPropertyAnimation, QEasingCurve, Signal, Property
 from PySide6.QtGui import QAction, QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
-    QCalendarWidget, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox,
+    QCalendarWidget, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QColorDialog,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
     QListWidget, QListWidgetItem, QInputDialog, QCompleter, QMenu, QMessageBox, QPlainTextEdit,
     QPushButton, QScrollArea, QStackedWidget, QTabWidget,
@@ -240,9 +240,13 @@ class TaskCard(QFrame):
     deleteRequested = Signal(int)
     completionChanged = Signal(int, bool)
 
-    def __init__(self, task, parent=None):
+    def __init__(self, task, category_style=None, parent=None):
         super().__init__(parent)
         self.task_id = int(task["id"])
+        category_style = category_style or {}
+        task_view = dict(task)
+        task_view["category_color"] = category_style.get("color", "")
+        task_view["category_icon"] = category_style.get("icon", "")
         self.setObjectName("taskCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -250,7 +254,7 @@ class TaskCard(QFrame):
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(12)
 
-        self.smart_icon = SmartTaskIcon(task, 44)
+        self.smart_icon = SmartTaskIcon(task_view, 44)
         root.addWidget(self.smart_icon, 0, Qt.AlignmentFlag.AlignTop)
 
         body = QVBoxLayout()
@@ -273,17 +277,12 @@ class TaskCard(QFrame):
         body.addWidget(meta_label)
 
         category = task["category"] or "Personal"
-        category_colors = {
-            "Personal": "#ff8585",
-            "University": "#8f9cff",
-            "Work": "#f0b35b",
-            "Health": "#63d2b3",
-            "Projects": "#c48cff",
-        }
-        category_label = QLabel(f"●  {category}")
+        category_color = category_style.get("color", "#9d7cff")
+        category_icon = category_style.get("icon", "✓")
+        category_label = QLabel(f"{category_icon}  {category}")
         category_label.setObjectName("categoryBadge")
         category_label.setStyleSheet(
-            f"color:{category_colors.get(category, '#9d7cff')}; font-weight:600;"
+            f"color:{category_color}; font-weight:600;"
         )
         body.addWidget(category_label)
 
@@ -624,6 +623,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
+
         title = QLabel("Manage")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
@@ -635,10 +635,22 @@ class MainWindow(QMainWindow):
         layout.addWidget(tabs, 1)
 
         self.category_list = QListWidget()
-        tabs.addTab(self._manager_tab(self.category_list, self._add_category, self._edit_category, self._delete_category), "Categories")
+        tabs.addTab(
+            self._manager_tab(
+                self.category_list, self._add_category,
+                self._edit_category, self._delete_category
+            ),
+            "Categories",
+        )
 
         self.tag_list = QListWidget()
-        tabs.addTab(self._manager_tab(self.tag_list, self._add_tag, self._edit_tag, self._delete_tag), "Tags")
+        tabs.addTab(
+            self._manager_tab(
+                self.tag_list, self._add_tag,
+                self._edit_tag, self._delete_tag
+            ),
+            "Tags",
+        )
 
         preset_page = QWidget()
         preset_layout = QVBoxLayout(preset_page)
@@ -649,7 +661,11 @@ class MainWindow(QMainWindow):
         preset_layout.addWidget(self.preset_category)
         preset_layout.addWidget(self.preset_list, 1)
         row = QHBoxLayout()
-        for label, slot in (("+ Add title", self._add_title_preset), ("Edit", self._edit_title_preset), ("Delete", self._delete_title_preset)):
+        for label, slot in (
+            ("+ Add title", self._add_title_preset),
+            ("Edit", self._edit_title_preset),
+            ("Delete", self._delete_title_preset),
+        ):
             button = QPushButton(label)
             button.clicked.connect(slot)
             row.addWidget(button)
@@ -671,8 +687,9 @@ class MainWindow(QMainWindow):
     def refresh_manage(self):
         self.category_list.clear()
         for row in self.database.list_categories():
-            item = QListWidgetItem(row["name"])
+            item = QListWidgetItem(f"{row['icon']}  {row['name']}")
             item.setData(Qt.ItemDataRole.UserRole, row["id"])
+            item.setForeground(QColor(row["color"]))
             self.category_list.addItem(item)
 
         self.tag_list.clear()
@@ -705,39 +722,116 @@ class MainWindow(QMainWindow):
         text, ok = QInputDialog.getText(self, title, label, text=value)
         return text.strip(), ok
 
+    def _category_editor(self, title, name="", color="#9d7cff", icon="✓"):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setMinimumWidth(420)
+        form = QFormLayout(dialog)
+
+        name_edit = QLineEdit(name)
+        icon_edit = QLineEdit(icon)
+        icon_edit.setMaxLength(4)
+        icon_edit.setPlaceholderText("Emoji or symbol")
+
+        color_button = QPushButton(color)
+        color_button.setStyleSheet(
+            f"background:{color}; color:#ffffff; font-weight:700; padding:8px;"
+        )
+
+        def choose_color():
+            chosen = QColorDialog.getColor(
+                QColor(color_button.text()), dialog, "Choose category color"
+            )
+            if chosen.isValid():
+                value = chosen.name()
+                color_button.setText(value)
+                color_button.setStyleSheet(
+                    f"background:{value}; color:#ffffff; font-weight:700; padding:8px;"
+                )
+
+        color_button.clicked.connect(choose_color)
+        form.addRow("Name", name_edit)
+        form.addRow("Icon", icon_edit)
+        form.addRow("Color", color_button)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+
+        name_value = name_edit.text().strip()
+        icon_value = icon_edit.text().strip() or "✓"
+        color_value = color_button.text().strip() or "#9d7cff"
+        if not name_value:
+            QMessageBox.warning(self, "TaskFlow", "Category name cannot be empty.")
+            return None
+        return name_value, color_value, icon_value
+
     def _add_category(self):
-        name, ok = self._prompt_name("New category", "Category name:")
-        if ok and name:
-            try:
-                self.database.add_category(name)
-            except Exception as exc:
-                QMessageBox.warning(self, "TaskFlow", f"Cannot create category: {exc}")
-            self.refresh_manage()
+        result = self._category_editor("New category")
+        if not result:
+            return
+        name, color, icon = result
+        try:
+            category_id = self.database.add_category(name)
+            self.database.update_category_style(category_id, color, icon)
+        except Exception as exc:
+            QMessageBox.warning(self, "TaskFlow", f"Cannot create category: {exc}")
+        self.refresh_manage()
+        self.refresh_tasks()
+        self.refresh_agenda()
 
     def _edit_category(self):
         item = self.category_list.currentItem()
         if not item:
             return
-        name, ok = self._prompt_name("Edit category", "Category name:", item.text())
-        if ok and name:
-            try:
-                self.database.update_category(item.data(Qt.ItemDataRole.UserRole), name)
-            except Exception as exc:
-                QMessageBox.warning(self, "TaskFlow", f"Cannot update category: {exc}")
-            self.refresh_manage()
-            self.refresh_tasks()
+        category_id = item.data(Qt.ItemDataRole.UserRole)
+        row = self.database.get_category(category_id)
+        if not row:
+            return
+        result = self._category_editor(
+            "Edit category", row["name"], row["color"], row["icon"]
+        )
+        if not result:
+            return
+        name, color, icon = result
+        try:
+            self.database.update_category(category_id, name)
+            self.database.update_category_style(category_id, color, icon)
+        except Exception as exc:
+            QMessageBox.warning(self, "TaskFlow", f"Cannot update category: {exc}")
+        self.refresh_manage()
+        self.refresh_tasks()
+        self.refresh_agenda()
 
     def _delete_category(self):
         item = self.category_list.currentItem()
         if not item:
             return
-        if item.text() == "Personal":
-            QMessageBox.information(self, "TaskFlow", "Personal is the fallback category and cannot be deleted.")
+        category_id = item.data(Qt.ItemDataRole.UserRole)
+        row = self.database.get_category(category_id)
+        if not row:
             return
-        if QMessageBox.question(self, "Delete category", f"Delete '{item.text()}'? Existing tasks will move to Personal.") == QMessageBox.StandardButton.Yes:
-            self.database.delete_category(item.data(Qt.ItemDataRole.UserRole))
+        name = row["name"]
+        if name == "Personal":
+            QMessageBox.information(
+                self, "TaskFlow",
+                "Personal is the fallback category and cannot be deleted."
+            )
+            return
+        if QMessageBox.question(
+            self, "Delete category",
+            f"Delete '{name}'? Existing tasks will move to Personal."
+        ) == QMessageBox.StandardButton.Yes:
+            self.database.delete_category(category_id)
             self.refresh_manage()
             self.refresh_tasks()
+            self.refresh_agenda()
 
     def _add_tag(self):
         name, ok = self._prompt_name("New tag", "Tag name:")
@@ -944,7 +1038,7 @@ class MainWindow(QMainWindow):
                 f"{len(groups[day])} task" + ("" if len(groups[day]) == 1 else "s"),
             )
             for task in groups[day]:
-                card = TaskCard(task)
+                card = TaskCard(task, self.database.category_style(task["category"] or "Personal"))
                 card.editRequested.connect(self.edit_task_by_id)
                 card.deleteRequested.connect(self.delete_task_by_id)
                 card.completionChanged.connect(self.set_task_completed)
@@ -975,7 +1069,14 @@ class MainWindow(QMainWindow):
     def refresh_agenda(self):
         selected = self.agenda.selected_date
         tasks = self.database.tasks_for_date(selected)
-        self.agenda.set_tasks(tasks)
+        decorated = []
+        for task in tasks:
+            item = dict(task)
+            style = self.database.category_style(task["category"] or "Personal")
+            item["category_color"] = style["color"]
+            item["category_icon"] = style["icon"]
+            decorated.append(item)
+        self.agenda.set_tasks(decorated)
 
     def search_changed(self):
         if self.stack.currentIndex() == 0:

@@ -233,6 +233,9 @@ class AgendaTimeline(QWidget):
         super().resizeEvent(event)
 
     def _category_color(self, task):
+        custom = task.get("category_color") if hasattr(task, "get") else None
+        if custom:
+            return QColor(custom)
         return QColor(self.CATEGORY_COLORS.get(task["category"], "#9d7cff"))
 
     def _task_tags(self, task):
