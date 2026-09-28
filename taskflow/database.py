@@ -35,6 +35,27 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
             CREATE INDEX IF NOT EXISTS idx_tasks_completed ON tasks(completed);
             CREATE INDEX IF NOT EXISTS idx_tasks_recurrence_source ON tasks(recurrence_source_id);
+
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS title_presets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(category_id, title),
+                FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE CASCADE
+            );
         """)
         self._add_column_if_missing("tasks", "start_time", "TEXT")
         self._add_column_if_missing("tasks", "end_time", "TEXT")
@@ -42,6 +63,132 @@ class Database:
         self._add_column_if_missing("tasks", "tags", "TEXT NOT NULL DEFAULT ''")
         self._add_column_if_missing("tasks", "recurrence", "TEXT NOT NULL DEFAULT 'none'")
         self._add_column_if_missing("tasks", "recurrence_source_id", "INTEGER")
+        self._seed_default_categories()
+        self.connection.commit()
+
+    def _seed_default_categories(self) -> None:
+        assert self.connection is not None
+        defaults = ["Personal", "University", "Work", "Health", "Projects"]
+        self.connection.executemany(
+            "INSERT OR IGNORE INTO categories(name) VALUES (?)",
+            [(name,) for name in defaults],
+        )
+
+    def list_categories(self):
+        assert self.connection is not None
+        return list(self.connection.execute("SELECT * FROM categories ORDER BY name COLLATE NOCASE"))
+
+    def add_category(self, name: str) -> int:
+        assert self.connection is not None
+        name = name.strip()
+        if not name:
+            raise ValueError("Category name cannot be empty")
+        cur = self.connection.execute("INSERT INTO categories(name) VALUES (?)", (name,))
+        self.connection.commit()
+        return int(cur.lastrowid)
+
+    def update_category(self, category_id: int, name: str) -> None:
+        assert self.connection is not None
+        name = name.strip()
+        if not name:
+            raise ValueError("Category name cannot be empty")
+        row = self.connection.execute("SELECT name FROM categories WHERE id=?", (category_id,)).fetchone()
+        if not row:
+            return
+        old = row["name"]
+        self.connection.execute("UPDATE categories SET name=? WHERE id=?", (name, category_id))
+        self.connection.execute("UPDATE tasks SET category=? WHERE category=?", (name, old))
+        self.connection.commit()
+
+    def delete_category(self, category_id: int) -> None:
+        assert self.connection is not None
+        row = self.connection.execute("SELECT name FROM categories WHERE id=?", (category_id,)).fetchone()
+        if not row:
+            return
+        self.connection.execute("UPDATE tasks SET category='Personal' WHERE category=?", (row["name"],))
+        self.connection.execute("DELETE FROM categories WHERE id=?", (category_id,))
+        self.connection.commit()
+
+    def list_tags(self):
+        assert self.connection is not None
+        return list(self.connection.execute("SELECT * FROM tags ORDER BY name COLLATE NOCASE"))
+
+    def add_tag(self, name: str) -> int:
+        assert self.connection is not None
+        name = name.strip().lstrip("#")
+        if not name:
+            raise ValueError("Tag name cannot be empty")
+        cur = self.connection.execute("INSERT INTO tags(name) VALUES (?)", (name,))
+        self.connection.commit()
+        return int(cur.lastrowid)
+
+    def update_tag(self, tag_id: int, name: str) -> None:
+        assert self.connection is not None
+        name = name.strip().lstrip("#")
+        row = self.connection.execute("SELECT name FROM tags WHERE id=?", (tag_id,)).fetchone()
+        if not row or not name:
+            return
+        old = row["name"]
+        self.connection.execute("UPDATE tags SET name=? WHERE id=?", (name, tag_id))
+        rows = self.connection.execute("SELECT id, tags FROM tasks WHERE tags LIKE ?", (f"%{old}%",)).fetchall()
+        for task in rows:
+            values = [name if part.strip().lstrip("#") == old else part.strip() for part in (task["tags"] or "").split(",") if part.strip()]
+            self.connection.execute("UPDATE tasks SET tags=? WHERE id=?", (", ".join(values), task["id"]))
+        self.connection.commit()
+
+    def delete_tag(self, tag_id: int) -> None:
+        assert self.connection is not None
+        row = self.connection.execute("SELECT name FROM tags WHERE id=?", (tag_id,)).fetchone()
+        if not row:
+            return
+        old = row["name"]
+        rows = self.connection.execute("SELECT id, tags FROM tasks WHERE tags LIKE ?", (f"%{old}%",)).fetchall()
+        for task in rows:
+            values = [part.strip() for part in (task["tags"] or "").split(",") if part.strip() and part.strip().lstrip("#") != old]
+            self.connection.execute("UPDATE tasks SET tags=? WHERE id=?", (", ".join(values), task["id"]))
+        self.connection.execute("DELETE FROM tags WHERE id=?", (tag_id,))
+        self.connection.commit()
+
+    def list_title_presets(self, category_id=None):
+        assert self.connection is not None
+        if category_id is None:
+            return list(self.connection.execute(
+                "SELECT tp.*, c.name AS category_name FROM title_presets tp "
+                "JOIN categories c ON c.id=tp.category_id ORDER BY c.name COLLATE NOCASE, tp.title COLLATE NOCASE"
+            ))
+        return list(self.connection.execute(
+            "SELECT * FROM title_presets WHERE category_id=? ORDER BY title COLLATE NOCASE",
+            (category_id,),
+        ))
+
+    def add_title_preset(self, category_id: int, title: str) -> int:
+        assert self.connection is not None
+        title = title.strip()
+        if not title:
+            raise ValueError("Preset title cannot be empty")
+        cur = self.connection.execute(
+            "INSERT INTO title_presets(category_id, title) VALUES (?, ?)",
+            (category_id, title),
+        )
+        self.connection.commit()
+        return int(cur.lastrowid)
+
+    def update_title_preset(self, preset_id: int, category_id: int, title: str) -> None:
+        assert self.connection is not None
+        title = title.strip()
+        if not title:
+            return
+        self.connection.execute(
+            "UPDATE title_presets SET category_id=?, title=? WHERE id=?",
+            (category_id, title, preset_id),
+        )
+        self.connection.commit()
+
+    def delete_title_preset(self, preset_id: int) -> None:
+        assert self.connection is not None
+        self.connection.execute("DELETE FROM title_presets WHERE id=?", (preset_id,))
+        self.connection.commit()
+
         self.connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_recurrence_unique "
             "ON tasks(recurrence_source_id, due_date) WHERE recurrence_source_id IS NOT NULL"
