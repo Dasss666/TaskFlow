@@ -30,6 +30,12 @@ A Windows desktop task manager and personal agenda built with Python, PySide6 an
 - Windows tray notifications for scheduled tasks
 - JSON import/export
 - Local SQLite persistence
+- AI Assistant with Gemini Free Tier integration
+- Voice commands from the 🎙 microphone button
+- AI CRUD operations limited to tasks, categories, tags and title presets
+- AI context uses the current TaskFlow data snapshot for resolving existing items
+- Destructive AI operations require explicit confirmation
+- Gemini API key stored in the Windows credential store via keyring
 
 ## Run
 ```powershell
@@ -58,6 +64,12 @@ iscc installer/TaskFlow.iss
 
 ## Current UI direction
 The 0.3.0 interface focuses the main workflow on Tasks, Dashboard and Agenda. The Dashboard remains the productivity overview, while Agenda provides a responsive day timeline inspired by modern calendar/task-planning applications.
+
+## AI Assistant
+
+TaskFlow 0.11.0 includes an optional Gemini-powered assistant. Configure a Gemini API key from the **AI settings** button in the assistant window. The assistant can create, modify and delete tasks, categories, tags and category-specific title presets. It cannot access arbitrary files, execute code, browse the web or change other application settings.
+
+The microphone button records a short command locally and sends the audio to Gemini for interpretation. Gemini supports common audio formats including M4A, WAV and MP3. The API's current Free Tier includes free usage for supported models, subject to Google's quotas and pricing rules.
 
 ## Roadmap
 - Productivity history and charts
