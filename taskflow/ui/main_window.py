@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QCalendarWidget, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
     QListWidget, QListWidgetItem, QInputDialog, QCompleter, QMenu, QMessageBox, QPlainTextEdit,
-    QPushButton, QScrollArea, QStackedWidget,
+    QPushButton, QScrollArea, QStackedWidget, QTabWidget,
     QTimeEdit, QToolButton, QVBoxLayout, QWidget
 )
 
